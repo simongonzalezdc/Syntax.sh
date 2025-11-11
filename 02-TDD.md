@@ -237,6 +237,61 @@ type Relationship struct {
 }
 ```
 
+### Character Storage Format
+
+**File Path:** `.story-name/characters/{character-id}.md`
+
+**ID Generation:**
+- Format: `char_` + 16 hex characters (e.g., `char_abc123def4567890`)
+- Generated using: `crypto/rand` for secure random bytes
+- Collision check: Verify ID doesn't exist before creating file
+
+**File Structure:**
+```markdown
+---
+id: char_abc123def4567890
+name: "Jane Doe"
+aliases: ["JD", "The Detective"]
+role: "protagonist"
+age: 34
+occupation: "Homicide Detective"
+appearance: "Tall, athletic build, short dark hair"
+background: "Former military, joined police force after discharge"
+arc: "Learning to trust others again"
+created_at: 2025-11-10T14:30:00Z
+updated_at: 2025-11-11T09:15:00Z
+relationships:
+  - character_id: char_xyz789abc1234567
+    type: "rival"
+    tension: "high"
+    notes: "Competing for promotion to captain"
+  - character_id: char_def456ghi7890123
+    type: "mentor"
+    tension: "low"
+    notes: "Former training officer, now retired"
+---
+
+# Jane Doe - Character Bio
+
+Jane grew up in a military family, moving from base to base...
+
+## Personality Traits
+
+- Determined and focused
+- Struggles with vulnerability
+- Fiercely loyal to those she trusts
+
+## Character Arc
+
+Begins the story as isolated and self-reliant. Through her partnership
+with [other character], she learns to open up and trust her team.
+```
+
+**Parsing:**
+- Use `github.com/adrg/frontmatter` for YAML parsing
+- Validate required fields: `id`, `name`, `created_at`
+- Optional fields get default values (empty string, zero, etc.)
+
 ---
 
 ### Scene Type
@@ -316,6 +371,89 @@ func (s *ProjectStats) GetStreak() int
 
 ---
 
+## Concurrency Strategy
+
+### Auto-Save Implementation
+
+**Problem:** Auto-save must not corrupt document during user editing
+
+**Solution:**
+```go
+type AutoSaver struct {
+    mu           sync.Mutex
+    lastSaveTime time.Time
+    debounce     time.Duration  // 300ms
+    saveTimer    *time.Timer
+}
+
+func (a *AutoSaver) TriggerSave(buffer *Buffer) {
+    a.mu.Lock()
+    defer a.mu.Unlock()
+
+    // Reset debounce timer
+    if a.saveTimer != nil {
+        a.saveTimer.Stop()
+    }
+
+    a.saveTimer = time.AfterFunc(a.debounce, func() {
+        // Create snapshot before save (avoid mid-edit corruption)
+        snapshot := buffer.Snapshot()
+
+        // Save in goroutine with error channel
+        go func() {
+            if err := saveToFile(snapshot); err != nil {
+                log.Printf("Auto-save failed: %v", err)
+                // Send error to UI via channel
+            }
+        }()
+    })
+}
+```
+
+**Key Points:**
+- Debounce 300ms after last keystroke
+- Snapshot buffer before save (immutable copy)
+- Non-blocking save in goroutine
+- Error reporting via channel to UI
+
+### Stats Calculation
+
+**Strategy:**
+- Read-only operations, safe for concurrent access
+- Use atomic counters for session stats
+
+```go
+type SessionStats struct {
+    WordsWritten atomic.Int64
+    KeyStrokes   atomic.Int64
+    StartTime    time.Time
+}
+
+func (s *SessionStats) IncrementWords(n int) {
+    s.WordsWritten.Add(int64(n))
+}
+```
+
+### File Locks
+
+**Current (v1.0):**
+- Not required (single-user, single-instance tool)
+- User warned if opening same project twice
+
+**Future (v1.1+):**
+- Add `.lock` file for safety
+- Check for stale locks (>1 hour old)
+- Offer to force-open or recover
+
+### Thread-Safety Rules
+
+1. **UI Updates:** Only in Bubble Tea Update() method
+2. **File I/O:** Always use goroutines for writes
+3. **Shared State:** Protect with mutex or use channels
+4. **Buffer Modifications:** Single-threaded (UI goroutine only)
+
+---
+
 ## Module Breakdown
 
 ### 1. editor/ - Text Editing
@@ -346,6 +484,85 @@ func (b *Buffer) Undo()
 func (b *Buffer) Redo()
 ```
 
+**Undo/Redo Implementation:**
+
+```go
+// EditHistory manages undo/redo state
+type EditHistory struct {
+    past    []BufferState  // Max 100 states
+    future  []BufferState  // Cleared on new edit
+    maxSize int            // 100 (configurable)
+}
+
+// BufferState captures snapshot for undo
+type BufferState struct {
+    Content    string
+    CursorLine int
+    CursorCol  int
+    Timestamp  time.Time
+}
+
+func (b *Buffer) RecordState() {
+    state := BufferState{
+        Content:    b.GetContent(),
+        CursorLine: b.cursorLine,
+        CursorCol:  b.cursorCol,
+        Timestamp:  time.Now(),
+    }
+
+    // Add to history
+    b.history.past = append(b.history.past, state)
+
+    // Trim if exceeds max size (keep most recent 100)
+    if len(b.history.past) > b.history.maxSize {
+        b.history.past = b.history.past[1:]
+    }
+
+    // Clear future (new edit invalidates redo stack)
+    b.history.future = nil
+}
+
+func (b *Buffer) Undo() error {
+    if len(b.history.past) == 0 {
+        return errors.New("nothing to undo")
+    }
+
+    // Save current state to future
+    current := b.currentState()
+    b.history.future = append(b.history.future, current)
+
+    // Pop from past
+    prev := b.history.past[len(b.history.past)-1]
+    b.history.past = b.history.past[:len(b.history.past)-1]
+
+    // Restore state
+    b.restoreState(prev)
+    return nil
+}
+
+func (b *Buffer) Redo() error {
+    if len(b.history.future) == 0 {
+        return errors.New("nothing to redo")
+    }
+
+    // Save current to past
+    current := b.currentState()
+    b.history.past = append(b.history.past, current)
+
+    // Pop from future
+    next := b.history.future[len(b.history.future)-1]
+    b.history.future = b.history.future[:len(b.history.future)-1]
+
+    // Restore state
+    b.restoreState(next)
+    return nil
+}
+
+// Memory limit: Max 100 undo states
+// Avg doc size: 50KB
+// Total memory: ~5MB for undo history (acceptable)
+```
+
 **Tests Required:**
 - Insert/delete operations
 - Cursor movement
@@ -366,6 +583,80 @@ func (c *Character) Save(projectDir string) error
 func (c *Character) Delete(projectDir string) error
 func GetAllCharacters(projectDir string) ([]*Character, error)
 func SearchCharacters(projectDir, query string) ([]*Character, error)
+func RenderRelationshipMap(characters []*Character) string
+```
+
+**ASCII Relationship Map:**
+
+**Library:** Hand-drawn using Unicode box-drawing characters (U+2500 range)
+
+**Example Output:**
+```
+Character Relationships
+━━━━━━━━━━━━━━━━━━━━━━━
+
+     Jane Doe ←━━[rivals/high]━━→ John Smith
+         ↓                              ↓
+    [mentor/low]                  [partner/medium]
+         ↓                              ↓
+     Alice Chen ←━━[love/low]━━━→ Bob Wilson
+```
+
+**Tension Level Visualization:**
+- Low: Solid line `━━━`
+- Medium: Dashed line `╌╌╌`
+- High: Jagged line `╱╲╱`
+
+**Implementation:**
+```go
+func RenderRelationshipMap(characters []*Character) string {
+    // Build adjacency graph
+    graph := buildGraph(characters)
+
+    // Layout characters in grid (simple tree layout)
+    positions := calculatePositions(graph)
+
+    // Render with box-drawing characters
+    canvas := make([][]rune, 50, 80)  // 50 lines, 80 cols
+
+    // Draw character nodes
+    for _, char := range characters {
+        pos := positions[char.ID]
+        drawBox(canvas, pos, char.Name)
+    }
+
+    // Draw relationship lines
+    for _, char := range characters {
+        for _, rel := range char.Relationships {
+            drawLine(canvas, positions[char.ID],
+                    positions[rel.CharacterID], rel.Tension)
+        }
+    }
+
+    return canvasToString(canvas)
+}
+
+// Line styles based on tension
+func getLineStyle(tension string) string {
+    switch tension {
+    case "low":    return "━"  // Solid
+    case "medium": return "╌"  // Dashed
+    case "high":   return "╱"  // Jagged
+    default:       return "─"  // Default
+    }
+}
+```
+
+**Location Map (Similar):**
+```
+World Map
+━━━━━━━━━
+
+[Riverside Tavern]━━━━road━━━━[Castle Blackstone]
+       │                            │
+    [forest]                    [courtyard]
+       │                            │
+   [Deep Woods]━━━━river━━━━━[Eastern Bridge]
 ```
 
 ---
@@ -404,12 +695,94 @@ func LoadAllScenes(projectDir string) (map[string]*Scene, error)
 **Key Functions:**
 
 ```go
-func ExportMarkdown(projectDir) ([]byte, error)
-func ExportPDF(projectDir) ([]byte, error)
-func ExportDOCX(projectDir) ([]byte, error)
-func ExportHTML(projectDir) ([]byte, error)
-func ExportStatsReport(projectDir) (string, error)
+func ExportMarkdown(projectDir string) ([]byte, error)
+func ExportPDF(projectDir string) ([]byte, error)
+func ExportDOCX(projectDir string) ([]byte, error)
+func ExportHTML(projectDir string) ([]byte, error)
+func ExportStatsReport(projectDir string) (string, error)
 ```
+
+**Error Handling & Size Limits:**
+
+```go
+// Custom errors
+var (
+    ErrProjectTooLarge = errors.New("project exceeds size limit for this format")
+    ErrNoScenes        = errors.New("project has no scenes to export")
+    ErrInvalidFormat   = errors.New("unsupported export format")
+    ErrExportFailed    = errors.New("export generation failed")
+)
+
+// Size limits (in bytes)
+const (
+    MaxDOCXSize = 10 * 1024 * 1024  // 10MB (~500,000 words)
+    MaxPDFSize  = 50 * 1024 * 1024  // 50MB (~2,500,000 words)
+)
+
+func ExportDOCX(projectDir string) ([]byte, error) {
+    // Calculate project size
+    size, err := calculateProjectSize(projectDir)
+    if err != nil {
+        return nil, fmt.Errorf("failed to calculate size: %w", err)
+    }
+
+    // Check size limit
+    if size > MaxDOCXSize {
+        return nil, fmt.Errorf("%w: %d bytes (max %d)",
+            ErrProjectTooLarge, size, MaxDOCXSize)
+    }
+
+    // Load scenes
+    scenes, err := scene.LoadAll(projectDir)
+    if err != nil {
+        return nil, fmt.Errorf("failed to load scenes: %w", err)
+    }
+
+    if len(scenes) == 0 {
+        return nil, ErrNoScenes
+    }
+
+    // Generate DOCX
+    doc := docx.New()
+    for _, scene := range scenes {
+        // Add chapter heading
+        doc.AddHeading(scene.Chapter, 1)
+
+        // Add scene content
+        doc.AddParagraph(scene.Content)
+    }
+
+    // Write to buffer
+    var buf bytes.Buffer
+    if err := doc.Write(&buf); err != nil {
+        return nil, fmt.Errorf("%w: %v", ErrExportFailed, err)
+    }
+
+    return buf.Bytes(), nil
+}
+
+func calculateProjectSize(projectDir string) (int64, error) {
+    var totalSize int64
+
+    scenesDir := filepath.Join(projectDir, "scenes")
+    err := filepath.Walk(scenesDir, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+        if !info.IsDir() {
+            totalSize += info.Size()
+        }
+        return nil
+    })
+
+    return totalSize, err
+}
+```
+
+**Export Dependencies:**
+- **PDF:** `github.com/jung-kurt/gofpdf` (2MB)
+- **DOCX:** `github.com/nguyenthenguyen/docx` (3MB)
+- Total binary size increase: ~5MB
 
 ---
 
@@ -559,40 +932,287 @@ func (m RootModel) View() string {
 
 ## Testing Strategy
 
+### Test Coverage Targets
+
+**Overall Target:** 75%+ coverage
+
+**By Module:**
+- **Critical Paths (90%+ required):**
+  - `editor/` - Buffer operations, cursor movement, undo/redo
+  - `storage/` - File save/load, corruption handling
+  - `export/` - All format generation, error cases
+
+- **Business Logic (80%+ required):**
+  - `character/` - CRUD operations, search, relationships
+  - `scene/` - Scene management, compilation
+  - `stats/` - Calculation accuracy
+
+- **UI Layer (50%+ required):**
+  - `ui/` - View rendering, input handling
+  - `app/` - Navigation, state management
+
 ### Test Files
 
 ```
 tests/
-├── editor_test.go
-├── story_test.go
-├── character_test.go
-└── export_test.go
+├── editor_test.go           # Buffer, cursor, undo/redo
+├── editor_bench_test.go     # Performance benchmarks
+├── story_test.go            # Project management
+├── character_test.go        # Character CRUD, search
+├── scene_test.go            # Scene compilation
+├── export_test.go           # All export formats
+├── storage_test.go          # File I/O, corruption
+└── integration_test.go      # End-to-end workflows
 ```
 
-### Example Test
+### Example Tests
 
+**Unit Test:**
 ```go
 func TestBufferInsert(t *testing.T) {
     buf := editor.NewBuffer("Hello")
     buf.Insert(5, " World")
-    
+
     if buf.GetContent() != "Hello World" {
         t.Errorf("got %q, want %q", buf.GetContent(), "Hello World")
     }
 }
 ```
 
+**Error Case Test:**
+```go
+func TestExportDOCX_ProjectTooLarge(t *testing.T) {
+    // Create project larger than 10MB
+    projectDir := createLargeProject(t, 15*1024*1024)
+    defer os.RemoveAll(projectDir)
+
+    _, err := export.ExportDOCX(projectDir)
+
+    if !errors.Is(err, export.ErrProjectTooLarge) {
+        t.Errorf("expected ErrProjectTooLarge, got %v", err)
+    }
+}
+```
+
+**Benchmark:**
+```go
+func BenchmarkBufferInsert(b *testing.B) {
+    buf := editor.NewBuffer("initial text")
+    b.ResetTimer()
+
+    for i := 0; i < b.N; i++ {
+        buf.Insert(5, "x")
+    }
+}
+
+// Target: <1000 ns/op
+```
+
+**Integration Test:**
+```go
+func TestWorkflow_CreateCharacterAndSave(t *testing.T) {
+    // Create project
+    proj, _ := story.CreateProject("Test Novel", "fantasy")
+    defer os.RemoveAll(proj.Dir)
+
+    // Create character
+    char := character.CreateCharacter("Jane Doe", "protagonist")
+
+    // Save
+    err := char.Save(proj.Dir)
+    if err != nil {
+        t.Fatalf("failed to save: %v", err)
+    }
+
+    // Load and verify
+    loaded, err := character.LoadCharacter(proj.Dir, char.ID)
+    if err != nil {
+        t.Fatalf("failed to load: %v", err)
+    }
+
+    if loaded.Name != "Jane Doe" {
+        t.Errorf("got name %q, want %q", loaded.Name, "Jane Doe")
+    }
+}
+```
+
+### Running Tests
+
+```bash
+# All tests with coverage
+go test -v -cover ./...
+
+# Coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+
+# Benchmarks
+go test -bench=. -benchmem ./...
+
+# Specific module
+go test -v ./internal/editor/
+
+# Race condition detection
+go test -race ./...
+```
+
 ---
 
 ## Performance Targets
 
-| Operation | Target | Must-Have |
-|-----------|--------|-----------|
-| Startup | <1s | ✅ |
-| Auto-save | <100ms | ✅ |
-| Scene switch | <200ms | ✅ |
-| Search | <100ms | ✅ |
-| Memory idle | <50MB | ✅ |
+| Operation | Target | Must-Have | Measurement Method |
+|-----------|--------|-----------|-------------------|
+| Startup | <1s | ✅ | `time ./syntax open "project"` |
+| Auto-save | <100ms | ✅ | pprof in tests |
+| Scene switch | <200ms | ✅ | UI timing logs |
+| Search | <100ms | ✅ | Benchmarks |
+| Memory idle | <50MB | ✅ | `ps aux` / `top` |
+
+### Performance Measurement
+
+**Startup Time:**
+```bash
+# Measure cold start
+time ./syntax open "test-project"
+
+# Should complete in <1s (including rendering)
+```
+
+**Auto-Save:**
+```go
+func TestAutoSavePerformance(t *testing.T) {
+    proj := createTestProject(t)
+    buf := editor.NewBuffer(strings.Repeat("test ", 10000)) // Large doc
+
+    start := time.Now()
+    err := saveProject(proj, buf)
+    duration := time.Since(start)
+
+    if duration > 100*time.Millisecond {
+        t.Errorf("Save took %v, want <100ms", duration)
+    }
+}
+```
+
+**Memory Profiling:**
+```bash
+# Run with memory profiling
+go test -memprofile=mem.prof -run=TestLongSession
+
+# Analyze
+go tool pprof mem.prof
+> top10
+> list functionName
+
+# Check for leaks
+go tool pprof -alloc_space mem.prof
+```
+
+**CPU Profiling:**
+```bash
+# Profile specific operation
+go test -cpuprofile=cpu.prof -bench=BenchmarkSceneSwitch
+
+# Visualize
+go tool pprof -http=:8080 cpu.prof
+```
+
+**Real-Time Monitoring:**
+```bash
+# Monitor memory during long session
+watch -n 1 'ps aux | grep syntax'
+
+# Expected: <50MB idle, <200MB during heavy use
+```
+
+---
+
+## Theme System Integration
+
+### Theme Loading Sequence
+
+1. **Startup:**
+   - Check `~/.config/syntax/config.toml` for `theme = "theme-name"`
+   - Default to "monochrome" if not set or invalid
+   - Load theme from `internal/theme/registry.go`
+   - Apply colors via Lipgloss styles
+
+2. **Runtime Switching:**
+   - Ctrl+Shift+T cycles through all 10 themes
+   - Updates config file immediately
+   - Refreshes all UI components
+   - Shows theme name briefly in status bar
+
+3. **Theme Application:**
+   ```go
+   func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+       switch msg := msg.(type) {
+       case tea.KeyMsg:
+           if msg.String() == "ctrl+shift+t" {
+               m.currentTheme = m.themeManager.NextTheme()
+               m.refreshStyles()
+               m.saveConfig()
+               return m, showMessage("Theme: " + m.currentTheme.Name)
+           }
+       }
+       return m, nil
+   }
+
+   func (m *Model) refreshStyles() {
+       theme := m.currentTheme
+       m.editorStyle = lipgloss.NewStyle().
+           Foreground(lipgloss.Color(theme.Text)).
+           Background(lipgloss.Color(theme.Background))
+
+       m.headingStyle = lipgloss.NewStyle().
+           Foreground(lipgloss.Color(theme.Accent)).
+           Bold(true)
+
+       // ... refresh all styles
+   }
+   ```
+
+### User Customization
+
+**v1.0:** No custom themes (10 built-in only)
+
+**v1.1 (Future):**
+- Support `~/.config/syntax/themes/custom.toml`
+- Format:
+  ```toml
+  name = "My Theme"
+  primary = "#FF0000"
+  secondary = "#00FF00"
+  accent = "#0000FF"
+  background = "#000000"
+  text = "#FFFFFF"
+  success = "#00FF00"
+  ```
+- Validate colors (valid hex)
+- Show in theme switcher
+
+### Error Handling
+
+```go
+func loadTheme(name string) Theme {
+    theme, ok := registry.GetTheme(name)
+    if !ok {
+        log.Printf("Invalid theme %q, using default", name)
+        return registry.GetTheme("monochrome")
+    }
+    return theme
+}
+
+// Corrupted config file
+func loadConfig() Config {
+    cfg, err := parseConfig(configPath)
+    if err != nil {
+        log.Printf("Config parse error: %v, using defaults", err)
+        return defaultConfig()
+    }
+    return cfg
+}
+```
 
 ---
 
