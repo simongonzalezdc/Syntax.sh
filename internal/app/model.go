@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kyanite/syntax/internal/editor"
+	"github.com/kyanite/syntax/internal/scene"
 	"github.com/kyanite/syntax/internal/story"
 	"github.com/kyanite/syntax/internal/theme"
 )
@@ -18,6 +20,10 @@ const (
 	ScreenCharacters
 	ScreenScenes
 	ScreenLocations
+	ScreenTextEditor
+	ScreenHelp
+	ScreenStats
+	ScreenExport
 )
 
 // Model is the root Bubble Tea model
@@ -33,10 +39,16 @@ type Model struct {
 	Error          error
 
 	// Sub-models
-	Projects       []*story.Project
-	SelectedIndex  int
-	InputMode      bool
-	InputValue     string
+	Projects      []*story.Project
+	SelectedIndex int
+	InputMode     bool
+	InputValue    string
+
+	// Editor state
+	CurrentScene   *scene.Scene
+	Buffer         *editor.Buffer
+	EditorMode     EditorMode
+	PreviousScreen Screen
 }
 
 // NewModel creates a new root model
@@ -87,8 +99,10 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.Message = fmt.Sprintf("Theme: %s", m.CurrentTheme.Name)
 		return m, nil
 
-	case "?":
+	case "?", "h":
 		// Show help
+		m.PreviousScreen = m.CurrentScreen
+		m.CurrentScreen = ScreenHelp
 		return m, nil
 	}
 
@@ -104,6 +118,16 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleCharactersKeys(msg)
 	case ScreenScenes:
 		return m.handleScenesKeys(msg)
+	case ScreenLocations:
+		return m.handleLocationsKeys(msg)
+	case ScreenTextEditor:
+		return m.handleTextEditorKeys(msg)
+	case ScreenHelp:
+		return m.handleHelpKeys(msg)
+	case ScreenStats:
+		return m.handleStatsKeys(msg)
+	case ScreenExport:
+		return m.handleExportKeys(msg)
 	}
 
 	return m, nil
@@ -122,6 +146,16 @@ func (m Model) View() string {
 		return m.viewCharacters()
 	case ScreenScenes:
 		return m.viewScenes()
+	case ScreenLocations:
+		return m.viewLocations()
+	case ScreenTextEditor:
+		return m.viewTextEditor()
+	case ScreenHelp:
+		return m.viewHelp()
+	case ScreenStats:
+		return m.viewStats()
+	case ScreenExport:
+		return m.viewExport()
 	default:
 		return "Unknown screen"
 	}

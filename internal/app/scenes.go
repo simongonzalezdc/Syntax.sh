@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kyanite/syntax/internal/editor"
 	"github.com/kyanite/syntax/internal/scene"
 	"github.com/kyanite/syntax/internal/storage"
 )
@@ -45,7 +46,7 @@ func (m Model) viewScenes() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.Styles.Text.Render("n - New Scene  Esc - Back"))
+	b.WriteString(m.Styles.Text.Render("n - New Scene  Enter - Edit Selected  ↑/↓ - Navigate  Esc - Back"))
 
 	if m.Message != "" {
 		b.WriteString("\n\n")
@@ -57,6 +58,37 @@ func (m Model) viewScenes() string {
 
 func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "up", "k":
+		if m.SelectedIndex > 0 {
+			m.SelectedIndex--
+		}
+		return m, nil
+
+	case "down", "j":
+		sceneCount := len(m.CurrentProject.Scenes)
+		if m.SelectedIndex < sceneCount-1 {
+			m.SelectedIndex++
+		}
+		return m, nil
+
+	case "enter":
+		// Open scene in editor
+		if len(m.CurrentProject.Scenes) > 0 {
+			// Get scene at selected index (need to handle map iteration)
+			idx := 0
+			for _, sc := range m.CurrentProject.Scenes {
+				if idx == m.SelectedIndex {
+					m.CurrentScene = sc
+					m.Buffer = editor.NewBuffer(sc.Content)
+					m.EditorMode = EditorModeNormal
+					m.CurrentScreen = ScreenTextEditor
+					return m, nil
+				}
+				idx++
+			}
+		}
+		return m, nil
+
 	case "n":
 		// Create new scene (simplified)
 		sc := &scene.Scene{
@@ -86,9 +118,4 @@ func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
-}
-
-// Placeholder for locations view
-func (m Model) viewLocations() string {
-	return "Locations view - Coming soon\n\nPress Esc to go back"
 }

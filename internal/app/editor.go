@@ -42,6 +42,7 @@ func (m Model) viewEditor() string {
 		"c - Characters",
 		"s - Scenes",
 		"l - Locations",
+		"t - Statistics",
 		"e - Export",
 		"h - Help",
 		"q - Quit",
@@ -72,6 +73,23 @@ func (m Model) handleEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "l":
 		m.CurrentScreen = ScreenLocations
+		return m, nil
+
+	case "t":
+		m.CurrentScreen = ScreenStats
+		return m, nil
+
+	case "e":
+		// Export - navigate to export screen
+		m.SelectedIndex = 0
+		m.Message = ""
+		m.Error = nil
+		m.CurrentScreen = ScreenExport
+		return m, nil
+
+	case "h":
+		m.PreviousScreen = ScreenEditor
+		m.CurrentScreen = ScreenHelp
 		return m, nil
 
 	case "esc":
