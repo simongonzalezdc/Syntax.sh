@@ -49,7 +49,7 @@ func (m Model) viewCharacters() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.Styles.Text.Render("n - New Character  Esc - Back"))
+	b.WriteString(m.Styles.Text.Render("n - New Character | r - Relationship Map | Esc - Back"))
 
 	if m.Message != "" {
 		b.WriteString("\n\n")
@@ -80,6 +80,12 @@ func (m Model) handleCharactersKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.CurrentProject.Characters[char.ID] = char
 		m.Message = fmt.Sprintf("Created character: %s", char.Name)
+		return m, nil
+
+	case "r":
+		// Show relationship map
+		m.SelectedIndex = 0
+		m.CurrentScreen = ScreenRelationshipMap
 		return m, nil
 
 	case "esc":

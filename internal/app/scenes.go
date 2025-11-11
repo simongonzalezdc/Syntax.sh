@@ -46,7 +46,7 @@ func (m Model) viewScenes() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.Styles.Text.Render("n - New Scene  Enter - Edit Selected  ↑/↓ - Navigate  Esc - Back"))
+	b.WriteString(m.Styles.Text.Render("n - New Scene | v - Validate | Enter - Edit | ↑/↓ - Navigate | Esc - Back"))
 
 	if m.Message != "" {
 		b.WriteString("\n\n")
@@ -109,6 +109,11 @@ func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.CurrentProject.Scenes[sc.ID] = sc
 		m.Message = fmt.Sprintf("Created scene: %s", sc.Name)
+		return m, nil
+
+	case "v":
+		// Show scene validation
+		m.CurrentScreen = ScreenSceneValidation
 		return m, nil
 
 	case "esc":

@@ -43,8 +43,8 @@ func (m Model) viewExport() string {
 	}{
 		{"Markdown", "Single .md file with all scenes", true},
 		{"HTML", "Formatted web page", true},
-		{"PDF", "Professional manuscript format (Coming Soon)", false},
-		{"DOCX", "Microsoft Word document (Coming Soon)", false},
+		{"PDF", "Professional manuscript format", true},
+		{"DOCX", "Microsoft Word document", true},
 	}
 
 	for i, format := range formats {
@@ -133,12 +133,14 @@ func (m Model) performExport() (tea.Model, tea.Cmd) {
 		filename = fmt.Sprintf("%s.html", sanitizeFilename(m.CurrentProject.Title))
 
 	case 2: // PDF
-		m.Error = fmt.Errorf("PDF export not yet implemented")
-		return m, nil
+		data, err = export.ExportPDF(m.CurrentProject, m.CurrentProject.Scenes)
+		format = "pdf"
+		filename = fmt.Sprintf("%s.pdf", sanitizeFilename(m.CurrentProject.Title))
 
 	case 3: // DOCX
-		m.Error = fmt.Errorf("DOCX export not yet implemented")
-		return m, nil
+		data, err = export.ExportDOCX(m.CurrentProject, m.CurrentProject.Scenes)
+		format = "docx"
+		filename = fmt.Sprintf("%s.docx", sanitizeFilename(m.CurrentProject.Title))
 
 	default:
 		m.Error = fmt.Errorf("invalid export format")

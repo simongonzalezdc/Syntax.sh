@@ -72,9 +72,14 @@ func (m Model) viewTextEditor() string {
 	line, col := m.Buffer.CursorPosition()
 	wordCount := len(strings.Fields(m.Buffer.GetContent()))
 
+	aiStatus := ""
+	if m.AIClient != nil && m.AIClient.IsEnabled() {
+		aiStatus = " | AI: ON"
+	}
+
 	statusBar := m.Styles.StatusBar.Render(fmt.Sprintf(
-		" %s | Line %d:%d | Words: %d | Ctrl+S: Save | Esc: Exit ",
-		mode, line+1, col+1, wordCount))
+		" %s | Line %d:%d | Words: %d%s | Ctrl+S: Save | Ctrl+A: AI | Esc: Exit ",
+		mode, line+1, col+1, wordCount, aiStatus))
 	b.WriteString(statusBar)
 
 	return b.String()
@@ -208,6 +213,16 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+y":
 			m.Buffer.Redo()
+			return m, nil
+		case "ctrl+a":
+			// Show AI suggestion menu
+			if m.AIClient != nil && m.AIClient.IsEnabled() {
+				m.PreviousScreen = ScreenTextEditor
+				m.CurrentScreen = ScreenAISuggestion
+				m.SelectedIndex = 0
+			} else {
+				m.Message = "AI Assistant is disabled. Enable in config."
+			}
 			return m, nil
 		}
 	} else if m.EditorMode == EditorModeInsert {
