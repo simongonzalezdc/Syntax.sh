@@ -2,7 +2,6 @@ package export
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/jung-kurt/gofpdf"
@@ -34,17 +33,8 @@ func ExportPDF(project *story.Project, scenes map[string]*scene.Scene) ([]byte, 
 		pdf.CellFormat(0, 8, "Genre: "+project.Genre, "", 1, "C", false, 0, "")
 	}
 
-	// Sort scenes
-	sortedScenes := make([]*scene.Scene, 0, len(scenes))
-	for _, sc := range scenes {
-		sortedScenes = append(sortedScenes, sc)
-	}
-	sort.Slice(sortedScenes, func(i, j int) bool {
-		if sortedScenes[i].Chapter != sortedScenes[j].Chapter {
-			return sortedScenes[i].Chapter < sortedScenes[j].Chapter
-		}
-		return sortedScenes[i].SceneNumber < sortedScenes[j].SceneNumber
-	})
+	// Sort scenes by chapter and scene number
+	sortedScenes := scene.SortScenes(scenes)
 
 	// Add scenes
 	currentChapter := 0

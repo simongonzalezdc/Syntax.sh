@@ -10,6 +10,7 @@ import (
 	"github.com/kyanite/syntax/internal/editor"
 	"github.com/kyanite/syntax/internal/location"
 	"github.com/kyanite/syntax/internal/scene"
+	"github.com/kyanite/syntax/internal/spellcheck"
 	"github.com/kyanite/syntax/internal/storage"
 	"github.com/kyanite/syntax/internal/story"
 	"github.com/kyanite/syntax/internal/theme"
@@ -71,6 +72,9 @@ type Model struct {
 	LastSaveTime   time.Time
 	SaveStatus     SaveStatus
 	LastEditTime   time.Time
+
+	// Spell check state
+	SpellChecker *spellcheck.Checker
 }
 
 // SaveStatus represents the current save state
@@ -103,6 +107,7 @@ func NewModel() Model {
 		SelectedIndex: 0,
 		SaveStatus:    SaveStatusSaved,
 		LastSaveTime:  time.Now(),
+		SpellChecker:  spellcheck.NewChecker(),
 	}
 }
 

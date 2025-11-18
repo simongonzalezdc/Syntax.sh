@@ -8,6 +8,7 @@ import (
 	"github.com/kyanite/syntax/internal/editor"
 	"github.com/kyanite/syntax/internal/scene"
 	"github.com/kyanite/syntax/internal/storage"
+	"github.com/kyanite/syntax/internal/utils"
 )
 
 func (m Model) viewScenes() string {
@@ -129,19 +130,12 @@ func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		// Open scene in editor
-		if len(m.CurrentProject.Scenes) > 0 {
-			// Get scene at selected index (need to handle map iteration)
-			idx := 0
-			for _, sc := range m.CurrentProject.Scenes {
-				if idx == m.SelectedIndex {
-					m.CurrentScene = sc
-					m.Buffer = editor.NewBuffer(sc.Content)
-					m.EditorMode = EditorModeNormal
-					m.CurrentScreen = ScreenTextEditor
-					return m, nil
-				}
-				idx++
-			}
+		sc := utils.GetSceneAtIndex(m.CurrentProject.Scenes, m.SelectedIndex)
+		if sc != nil {
+			m.CurrentScene = sc
+			m.Buffer = editor.NewBuffer(sc.Content)
+			m.EditorMode = EditorModeNormal
+			m.CurrentScreen = ScreenTextEditor
 		}
 		return m, nil
 
@@ -153,40 +147,33 @@ func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "d":
 		// Delete selected scene
-		if len(m.CurrentProject.Scenes) > 0 {
-			// Get scene at selected index
-			idx := 0
-			for sceneID, sc := range m.CurrentProject.Scenes {
-				if idx == m.SelectedIndex {
-					// Delete the scene
-					err := storage.DeleteScene(m.CurrentProject.Directory, sceneID)
-					if err != nil {
-						m.Error = err
-						return m, nil
-					}
+		sceneID := utils.FindSceneIDAtIndex(m.CurrentProject.Scenes, m.SelectedIndex)
+		if sceneID != "" {
+			sc := m.CurrentProject.Scenes[sceneID]
+			// Delete the scene
+			err := storage.DeleteScene(m.CurrentProject.Directory, sceneID)
+			if err != nil {
+				m.Error = err
+				return m, nil
+			}
 
-					// Remove from project's scene map
-					delete(m.CurrentProject.Scenes, sceneID)
-					m.CurrentProject.TotalScenes--
+			// Remove from project's scene map
+			delete(m.CurrentProject.Scenes, sceneID)
+			m.CurrentProject.TotalScenes--
 
-					// Update project metadata
-					if err := storage.SaveProjectMetadata(m.CurrentProject); err != nil {
-						m.Error = fmt.Errorf("failed to save project: %w", err)
-					} else {
-						m.Message = fmt.Sprintf("Deleted scene: %s", sc.Name)
-					}
+			// Update project metadata
+			if err := storage.SaveProjectMetadata(m.CurrentProject); err != nil {
+				m.Error = fmt.Errorf("failed to save project: %w", err)
+			} else {
+				m.Message = fmt.Sprintf("Deleted scene: %s", sc.Name)
+			}
 
-					// Adjust selected index
-					if m.SelectedIndex >= len(m.CurrentProject.Scenes) {
-						m.SelectedIndex = len(m.CurrentProject.Scenes) - 1
-					}
-					if m.SelectedIndex < 0 {
-						m.SelectedIndex = 0
-					}
-
-					return m, nil
-				}
-				idx++
+			// Adjust selected index
+			if m.SelectedIndex >= len(m.CurrentProject.Scenes) {
+				m.SelectedIndex = len(m.CurrentProject.Scenes) - 1
+			}
+			if m.SelectedIndex < 0 {
+				m.SelectedIndex = 0
 			}
 		}
 		return m, nil

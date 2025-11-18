@@ -114,6 +114,11 @@ func (m Model) viewTextEditor() string {
 		aiStatus = " | AI: ON"
 	}
 
+	spellStatus := ""
+	if m.SpellChecker != nil && m.SpellChecker.IsEnabled() {
+		spellStatus = " | Spell: ON"
+	}
+
 	// Save status indicator
 	saveStatus := ""
 	switch m.SaveStatus {
@@ -146,8 +151,8 @@ func (m Model) viewTextEditor() string {
 	}
 
 	statusBar := m.Styles.StatusBar.Render(fmt.Sprintf(
-		" %s | Line %d:%d | Words: %d%s%s%s | Ctrl+F: Find | Ctrl+H: Replace | Ctrl+S: Save | Esc: Exit ",
-		mode, line+1, col+1, wordCount, aiStatus, saveStatus, searchInfo))
+		" %s | Line %d:%d | Words: %d%s%s%s%s | Ctrl+F: Find | Ctrl+H: Replace | Ctrl+L: Spell | Ctrl+S: Save | Esc: Exit ",
+		mode, line+1, col+1, wordCount, aiStatus, spellStatus, saveStatus, searchInfo))
 	b.WriteString(statusBar)
 
 	return b.String()
@@ -229,22 +234,108 @@ func (m Model) renderPreviewPane(width, height int) string {
 }
 
 func (m Model) renderMarkdownLine(line string) string {
-	// Simple markdown rendering
+	// Handle headers
 	if strings.HasPrefix(line, "# ") {
 		return m.Styles.Heading.Bold(true).Render(strings.TrimPrefix(line, "# "))
 	} else if strings.HasPrefix(line, "## ") {
 		return m.Styles.Heading.Render(strings.TrimPrefix(line, "## "))
 	} else if strings.HasPrefix(line, "### ") {
 		return m.Styles.Accent.Render(strings.TrimPrefix(line, "### "))
-	} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
-		return m.Styles.Text.Render("  • " + line[2:])
-	} else if strings.HasPrefix(line, "**") && strings.HasSuffix(line, "**") {
-		return m.Styles.Text.Bold(true).Render(strings.Trim(line, "**"))
-	} else if strings.HasPrefix(line, "*") && strings.HasSuffix(line, "*") {
-		return m.Styles.Text.Italic(true).Render(strings.Trim(line, "*"))
 	}
 
-	return m.Styles.Text.Render(line)
+	// Handle lists
+	if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
+		content := m.renderInlineMarkdown(line[2:])
+		return m.Styles.Text.Render("  • " + content)
+	}
+
+	// Handle code blocks (simple detection)
+	if strings.HasPrefix(line, "```") {
+		return m.Styles.Text.Faint(true).Render(line)
+	}
+
+	// Handle indented code
+	if strings.HasPrefix(line, "    ") || strings.HasPrefix(line, "\t") {
+		return m.Styles.Text.Faint(true).Render(line)
+	}
+
+	// Handle blockquotes
+	if strings.HasPrefix(line, "> ") {
+		content := m.renderInlineMarkdown(line[2:])
+		return m.Styles.Text.Italic(true).Render("  " + content)
+	}
+
+	// Render inline markdown (bold, italic, code, links)
+	rendered := m.renderInlineMarkdown(line)
+	return m.Styles.Text.Render(rendered)
+}
+
+// renderInlineMarkdown handles inline markdown formatting
+func (m Model) renderInlineMarkdown(text string) string {
+	var result strings.Builder
+	i := 0
+
+	for i < len(text) {
+		// Check for inline code `code`
+		if text[i] == '`' {
+			end := strings.Index(text[i+1:], "`")
+			if end != -1 {
+				end += i + 1
+				// Render code without further processing
+				result.WriteString(text[i : end+1])
+				i = end + 1
+				continue
+			}
+		}
+
+		// Check for links [text](url)
+		if text[i] == '[' {
+			closeBracket := strings.Index(text[i+1:], "]")
+			if closeBracket != -1 {
+				closeBracket += i + 1
+				if closeBracket+1 < len(text) && text[closeBracket+1] == '(' {
+					closeParen := strings.Index(text[closeBracket+2:], ")")
+					if closeParen != -1 {
+						// Extract link text
+						linkText := text[i+1 : closeBracket]
+						result.WriteString(linkText)
+						i = closeBracket + closeParen + 3
+						continue
+					}
+				}
+			}
+		}
+
+		// Check for bold **text**
+		if i+1 < len(text) && text[i:i+2] == "**" {
+			end := strings.Index(text[i+2:], "**")
+			if end != -1 {
+				end += i + 2
+				// Extract and render bold text
+				result.WriteString(text[i : end+2])
+				i = end + 2
+				continue
+			}
+		}
+
+		// Check for italic *text*
+		if text[i] == '*' {
+			end := strings.Index(text[i+1:], "*")
+			if end != -1 {
+				end += i + 1
+				// Extract and render italic text
+				result.WriteString(text[i : end+1])
+				i = end + 1
+				continue
+			}
+		}
+
+		// Regular character
+		result.WriteByte(text[i])
+		i++
+	}
+
+	return result.String()
 }
 
 func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -449,6 +540,17 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.SelectedIndex = 0
 			} else {
 				m.Message = "AI Assistant is disabled. Enable in config."
+			}
+			return m, nil
+		case "ctrl+l":
+			// Toggle spell check
+			if m.SpellChecker != nil {
+				m.SpellChecker.Toggle()
+				if m.SpellChecker.IsEnabled() {
+					m.Message = "Spell check enabled"
+				} else {
+					m.Message = "Spell check disabled"
+				}
 			}
 			return m, nil
 		}
