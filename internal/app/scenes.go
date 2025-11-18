@@ -40,7 +40,14 @@ func (m Model) viewScenes() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.Styles.Text.Render("n - New Scene | v - Validate | Enter - Edit | ↑/↓ - Navigate | Esc - Back"))
+
+	// Show input prompt if in input mode
+	if m.InputMode {
+		b.WriteString(m.Styles.Accent.Render(fmt.Sprintf("Enter scene name: %s█", m.InputValue)))
+		b.WriteString("\n")
+	} else {
+		b.WriteString(m.Styles.Text.Render("n - New Scene | v - Validate | d - Delete | Enter - Edit | ↑/↓ - Navigate | Esc - Back"))
+	}
 
 	if m.Message != "" {
 		b.WriteString("\n\n")
@@ -51,6 +58,61 @@ func (m Model) viewScenes() string {
 }
 
 func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle input mode for scene creation
+	if m.InputMode {
+		switch msg.String() {
+		case "enter":
+			// Create scene with user-provided name
+			if m.InputValue != "" {
+				sc := &scene.Scene{
+					Chapter:     1, // Default chapter
+					SceneNumber: len(m.CurrentProject.Scenes) + 1,
+					Name:        m.InputValue,
+					Status:      "draft",
+				}
+
+				err := storage.SaveScene(m.CurrentProject.Directory, sc)
+				if err != nil {
+					m.Error = err
+				} else {
+					if m.CurrentProject.Scenes == nil {
+						m.CurrentProject.Scenes = make(map[string]*scene.Scene)
+					}
+					m.CurrentProject.Scenes[sc.ID] = sc
+					m.CurrentProject.TotalScenes++
+					m.Message = fmt.Sprintf("Created scene: %s", sc.Name)
+
+					// Save updated project metadata
+					if err := storage.SaveProjectMetadata(m.CurrentProject); err != nil {
+						m.Error = fmt.Errorf("failed to save project: %w", err)
+					}
+				}
+			}
+			m.InputMode = false
+			m.InputValue = ""
+			return m, nil
+
+		case "esc":
+			m.InputMode = false
+			m.InputValue = ""
+			return m, nil
+
+		case "backspace":
+			if len(m.InputValue) > 0 {
+				m.InputValue = m.InputValue[:len(m.InputValue)-1]
+			}
+			return m, nil
+
+		default:
+			// Add character to input
+			if len(msg.String()) == 1 {
+				m.InputValue += msg.String()
+			}
+			return m, nil
+		}
+	}
+
+	// Normal mode
 	switch msg.String() {
 	case "up", "k":
 		if m.SelectedIndex > 0 {
@@ -84,25 +146,49 @@ func (m Model) handleScenesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "n":
-		// Create new scene (simplified)
-		sc := &scene.Scene{
-			Chapter:     1,
-			SceneNumber: len(m.CurrentProject.Scenes) + 1,
-			Name:        "New Scene",
-			Status:      "draft",
-		}
+		// Enter input mode for scene creation
+		m.InputMode = true
+		m.InputValue = ""
+		return m, nil
 
-		err := storage.SaveScene(m.CurrentProject.Directory, sc)
-		if err != nil {
-			m.Error = err
-			return m, nil
-		}
+	case "d":
+		// Delete selected scene
+		if len(m.CurrentProject.Scenes) > 0 {
+			// Get scene at selected index
+			idx := 0
+			for sceneID, sc := range m.CurrentProject.Scenes {
+				if idx == m.SelectedIndex {
+					// Delete the scene
+					err := storage.DeleteScene(m.CurrentProject.Directory, sceneID)
+					if err != nil {
+						m.Error = err
+						return m, nil
+					}
 
-		if m.CurrentProject.Scenes == nil {
-			m.CurrentProject.Scenes = make(map[string]*scene.Scene)
+					// Remove from project's scene map
+					delete(m.CurrentProject.Scenes, sceneID)
+					m.CurrentProject.TotalScenes--
+
+					// Update project metadata
+					if err := storage.SaveProjectMetadata(m.CurrentProject); err != nil {
+						m.Error = fmt.Errorf("failed to save project: %w", err)
+					} else {
+						m.Message = fmt.Sprintf("Deleted scene: %s", sc.Name)
+					}
+
+					// Adjust selected index
+					if m.SelectedIndex >= len(m.CurrentProject.Scenes) {
+						m.SelectedIndex = len(m.CurrentProject.Scenes) - 1
+					}
+					if m.SelectedIndex < 0 {
+						m.SelectedIndex = 0
+					}
+
+					return m, nil
+				}
+				idx++
+			}
 		}
-		m.CurrentProject.Scenes[sc.ID] = sc
-		m.Message = fmt.Sprintf("Created scene: %s", sc.Name)
 		return m, nil
 
 	case "v":

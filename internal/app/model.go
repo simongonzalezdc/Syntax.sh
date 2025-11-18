@@ -8,7 +8,7 @@ import (
 	"github.com/kyanite/syntax/internal/ai"
 	_ "github.com/kyanite/syntax/internal/character" // Used in story.Project
 	"github.com/kyanite/syntax/internal/editor"
-	_ "github.com/kyanite/syntax/internal/location" // Used in story.Project
+	"github.com/kyanite/syntax/internal/location"
 	"github.com/kyanite/syntax/internal/scene"
 	"github.com/kyanite/syntax/internal/storage"
 	"github.com/kyanite/syntax/internal/story"
@@ -25,6 +25,7 @@ const (
 	ScreenCharacters
 	ScreenScenes
 	ScreenLocations
+	ScreenLocationEditor
 	ScreenTextEditor
 	ScreenHelp
 	ScreenStats
@@ -32,6 +33,7 @@ const (
 	ScreenAISuggestion
 	ScreenRelationshipMap
 	ScreenSceneValidation
+	ScreenBackups
 )
 
 // Model is the root Bubble Tea model
@@ -51,12 +53,14 @@ type Model struct {
 	SelectedIndex int
 	InputMode     bool
 	InputValue    string
+	ReplaceValue  string // Used for find & replace
 
 	// Editor state
-	CurrentScene   *scene.Scene
-	Buffer         *editor.Buffer
-	EditorMode     EditorMode
-	PreviousScreen Screen
+	CurrentScene    *scene.Scene
+	CurrentLocation *location.Location
+	Buffer          *editor.Buffer
+	EditorMode      EditorMode
+	PreviousScreen  Screen
 
 	// AI Assistant state
 	AIClient      *ai.Client
@@ -263,6 +267,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case ScreenLocations:
 		return m.handleLocationsKeys(msg)
+	case ScreenLocationEditor:
+		return m.handleLocationEditorKeys(msg)
 	case ScreenTextEditor:
 		return m.handleTextEditorKeys(msg)
 	case ScreenHelp:
@@ -287,6 +293,8 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.ensureDataLoaded()
 		}
 		return m, cmd
+	case ScreenBackups:
+		return m.handleBackupsKeys(msg)
 	}
 
 	return m, nil
@@ -307,6 +315,8 @@ func (m Model) View() string {
 		return m.viewScenes()
 	case ScreenLocations:
 		return m.viewLocations()
+	case ScreenLocationEditor:
+		return m.viewLocationEditor()
 	case ScreenTextEditor:
 		return m.viewTextEditor()
 	case ScreenHelp:
@@ -321,6 +331,8 @@ func (m Model) View() string {
 		return m.viewRelationshipMap()
 	case ScreenSceneValidation:
 		return m.viewSceneValidation()
+	case ScreenBackups:
+		return m.viewBackups()
 	default:
 		return "Unknown screen"
 	}

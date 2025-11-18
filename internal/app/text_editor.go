@@ -73,6 +73,28 @@ func (m Model) viewTextEditor() string {
 		b.WriteString("\n")
 	}
 
+	// Replace input box (overlay when in replace mode)
+	if m.EditorMode == EditorModeReplace {
+		if m.InputMode {
+			// Entering search term or replace term
+			if m.ReplaceValue == "" {
+				// First input: search term
+				replaceBox := m.Styles.Accent.Render(fmt.Sprintf(" Find: %s█ | Replace: ", m.InputValue))
+				b.WriteString(replaceBox)
+			} else {
+				// Second input: replace term
+				replaceBox := m.Styles.Accent.Render(fmt.Sprintf(" Find: %s | Replace: %s█ ", m.ReplaceValue, m.InputValue))
+				b.WriteString(replaceBox)
+			}
+			b.WriteString("\n")
+		} else {
+			// Show replace controls
+			replaceBox := m.Styles.Accent.Render(fmt.Sprintf(" Find: %s | Replace: %s | r: Replace | a: Replace All | n: Next | p: Previous | Esc: Cancel ", m.ReplaceValue, m.InputValue))
+			b.WriteString(replaceBox)
+			b.WriteString("\n")
+		}
+	}
+
 	// Status bar
 	mode := "NORMAL"
 	switch m.EditorMode {
@@ -124,7 +146,7 @@ func (m Model) viewTextEditor() string {
 	}
 
 	statusBar := m.Styles.StatusBar.Render(fmt.Sprintf(
-		" %s | Line %d:%d | Words: %d%s%s%s | Ctrl+F: Find | Ctrl+S: Save | Esc: Exit ",
+		" %s | Line %d:%d | Words: %d%s%s%s | Ctrl+F: Find | Ctrl+H: Replace | Ctrl+S: Save | Esc: Exit ",
 		mode, line+1, col+1, wordCount, aiStatus, saveStatus, searchInfo))
 	b.WriteString(statusBar)
 
@@ -269,6 +291,96 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Handle replace mode
+	if m.EditorMode == EditorModeReplace {
+		if m.InputMode {
+			// Entering search or replace term
+			switch msg.String() {
+			case "esc":
+				m.EditorMode = EditorModeNormal
+				m.Buffer.ClearSearch()
+				m.InputMode = false
+				m.InputValue = ""
+				m.ReplaceValue = ""
+				return m, nil
+			case "enter":
+				if m.ReplaceValue == "" {
+					// First enter: save search term, prompt for replace term
+					m.ReplaceValue = m.InputValue
+					m.InputValue = ""
+				} else {
+					// Second enter: perform search
+					if m.ReplaceValue != "" {
+						count := m.Buffer.Find(m.ReplaceValue, false)
+						if count == 0 {
+							m.Message = "No matches found"
+						} else {
+							m.Message = fmt.Sprintf("Found %d matches", count)
+						}
+					}
+					m.InputMode = false
+				}
+				return m, nil
+			case "backspace":
+				if len(m.InputValue) > 0 {
+					m.InputValue = m.InputValue[:len(m.InputValue)-1]
+				}
+				return m, nil
+			default:
+				// Add character to input
+				if len(msg.String()) == 1 {
+					m.InputValue += msg.String()
+				}
+				return m, nil
+			}
+		} else {
+			// Replace controls active
+			switch msg.String() {
+			case "esc":
+				m.EditorMode = EditorModeNormal
+				m.Buffer.ClearSearch()
+				m.InputValue = ""
+				m.ReplaceValue = ""
+				return m, nil
+			case "r":
+				// Replace current match
+				if m.Buffer.ReplaceCurrent(m.InputValue) {
+					searchTerm, current, total := m.Buffer.GetSearchInfo()
+					if total > 0 {
+						m.Message = fmt.Sprintf("Replaced. '%s' (%d/%d remaining)", searchTerm, current, total)
+					} else {
+						m.Message = "All matches replaced"
+						m.EditorMode = EditorModeNormal
+						m.ReplaceValue = ""
+						m.InputValue = ""
+					}
+				}
+				m.LastEditTime = time.Now()
+				m.SaveStatus = SaveStatusUnsaved
+				return m, nil
+			case "a":
+				// Replace all matches
+				count := m.Buffer.ReplaceAll(m.ReplaceValue, m.InputValue, false)
+				m.Message = fmt.Sprintf("Replaced %d occurrences", count)
+				m.EditorMode = EditorModeNormal
+				m.ReplaceValue = ""
+				m.InputValue = ""
+				m.LastEditTime = time.Now()
+				m.SaveStatus = SaveStatusUnsaved
+				return m, nil
+			case "n":
+				// Find next
+				m.Buffer.FindNext()
+				return m, nil
+			case "p":
+				// Find previous
+				m.Buffer.FindPrevious()
+				return m, nil
+			}
+		}
+		return m, nil
+	}
+
 	// Mode switching
 	if m.EditorMode == EditorModeNormal {
 		switch msg.String() {
@@ -292,6 +404,13 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.EditorMode = EditorModeSearch
 			m.InputMode = true
 			m.InputValue = ""
+			return m, nil
+		case "ctrl+h":
+			// Enter replace mode
+			m.EditorMode = EditorModeReplace
+			m.InputMode = true
+			m.InputValue = ""
+			m.ReplaceValue = ""
 			return m, nil
 		case "n":
 			// Find next (if search active)

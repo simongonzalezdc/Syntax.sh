@@ -131,8 +131,21 @@ func (m Model) handleLocationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.InputValue = ""
 			return m, nil
 		}
-		// TODO: Navigate to location editor
-		m.Message = "Location editor coming soon"
+
+		// Navigate to location editor
+		if locCount > 0 && m.SelectedIndex < locCount {
+			locations := make([]*location.Location, 0, len(m.CurrentProject.Locations))
+			for _, loc := range m.CurrentProject.Locations {
+				locations = append(locations, loc)
+			}
+
+			if m.SelectedIndex < len(locations) {
+				m.CurrentLocation = locations[m.SelectedIndex]
+				m.PreviousScreen = ScreenLocations
+				m.CurrentScreen = ScreenLocationEditor
+				m.SelectedIndex = 0 // Reset for field navigation
+			}
+		}
 		return m, nil
 
 	case "d":

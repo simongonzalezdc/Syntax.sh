@@ -619,6 +619,73 @@ func (b *Buffer) GetSearchInfo() (term string, current int, total int) {
 	return b.searchTerm, b.searchIndex + 1, len(b.searchResults)
 }
 
+// ReplaceCurrent replaces the current search match and moves to the next one
+func (b *Buffer) ReplaceCurrent(replacement string) bool {
+	if len(b.searchResults) == 0 || b.searchIndex < 0 || b.searchIndex >= len(b.searchResults) {
+		return false
+	}
+
+	result := b.searchResults[b.searchIndex]
+	line := b.lines[result.Line]
+
+	// Create replace command for undo
+	cmd := &ReplaceAllCommand{
+		Replacements: make([]struct {
+			Line        int
+			Col         int
+			OldText     string
+			NewText     string
+			OrigContent string
+		}, 1),
+		PrevLine:  b.cursorLine,
+		PrevCol:   b.cursorCol,
+		Timestamp: time.Now(),
+	}
+
+	cmd.Replacements[0].Line = result.Line
+	cmd.Replacements[0].Col = result.Col
+	cmd.Replacements[0].OldText = b.searchTerm
+	cmd.Replacements[0].NewText = replacement
+	cmd.Replacements[0].OrigContent = line
+
+	// Record command
+	b.recordCommand(cmd)
+
+	// Perform replacement
+	before := line[:result.Col]
+	after := line[result.Col+len(b.searchTerm):]
+	b.lines[result.Line] = before + replacement + after
+
+	b.modified = true
+
+	// Update cursor position to end of replacement
+	b.cursorLine = result.Line
+	b.cursorCol = result.Col + len(replacement)
+
+	// Remove this result from search results
+	b.searchResults = append(b.searchResults[:b.searchIndex], b.searchResults[b.searchIndex+1:]...)
+
+	// Adjust search index
+	if b.searchIndex >= len(b.searchResults) {
+		b.searchIndex = 0
+	}
+
+	// If no more results, clear search
+	if len(b.searchResults) == 0 {
+		b.ClearSearch()
+		return false
+	}
+
+	// Move to next occurrence
+	if len(b.searchResults) > 0 && b.searchIndex < len(b.searchResults) {
+		next := b.searchResults[b.searchIndex]
+		b.cursorLine = next.Line
+		b.cursorCol = next.Col
+	}
+
+	return true
+}
+
 // ReplaceAll replaces all occurrences of the search term
 func (b *Buffer) ReplaceAll(searchTerm, replacement string, caseSensitive bool) int {
 	count := b.Find(searchTerm, caseSensitive)
