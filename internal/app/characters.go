@@ -21,13 +21,7 @@ func (m Model) viewCharacters() string {
 	b.WriteString(titleBar)
 	b.WriteString("\n\n")
 
-	// Load characters if not loaded
-	if m.CurrentProject.Characters == nil || len(m.CurrentProject.Characters) == 0 {
-		chars, err := storage.LoadAllCharacters(m.CurrentProject.Directory)
-		if err == nil {
-			m.CurrentProject.Characters = chars
-		}
-	}
+	// Data is loaded in Update via ensureDataLoaded()
 
 	b.WriteString(m.Styles.Heading.Render("👥 Characters"))
 	b.WriteString("\n\n")

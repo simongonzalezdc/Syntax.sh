@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/kyanite/syntax/internal/storage"
 	"github.com/kyanite/syntax/internal/visualization"
 )
 
@@ -21,13 +20,7 @@ func (m Model) viewRelationshipMap() string {
 		return "No project loaded"
 	}
 
-	// Load characters if not loaded
-	if m.CurrentProject.Characters == nil || len(m.CurrentProject.Characters) == 0 {
-		chars, err := storage.LoadAllCharacters(m.CurrentProject.Directory)
-		if err == nil {
-			m.CurrentProject.Characters = chars
-		}
-	}
+	// Data is loaded in Update via ensureDataLoaded()
 
 	var b strings.Builder
 

@@ -6,7 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyanite/syntax/internal/ai"
+	_ "github.com/kyanite/syntax/internal/character" // Used in story.Project
 	"github.com/kyanite/syntax/internal/editor"
+	_ "github.com/kyanite/syntax/internal/location" // Used in story.Project
 	"github.com/kyanite/syntax/internal/scene"
 	"github.com/kyanite/syntax/internal/storage"
 	"github.com/kyanite/syntax/internal/story"
@@ -181,8 +183,42 @@ func (m *Model) checkAutoSave() tea.Cmd {
 	}
 }
 
+// ensureDataLoaded ensures necessary data is loaded for the current screen
+func (m *Model) ensureDataLoaded() {
+	if m.CurrentProject == nil {
+		return
+	}
+
+	switch m.CurrentScreen {
+	case ScreenScenes, ScreenSceneValidation:
+		if m.CurrentProject.Scenes == nil || len(m.CurrentProject.Scenes) == 0 {
+			scenes, err := storage.LoadAllScenes(m.CurrentProject.Directory)
+			if err == nil {
+				m.CurrentProject.Scenes = scenes
+			}
+		}
+	case ScreenCharacters, ScreenRelationshipMap:
+		if m.CurrentProject.Characters == nil || len(m.CurrentProject.Characters) == 0 {
+			chars, err := storage.LoadAllCharacters(m.CurrentProject.Directory)
+			if err == nil {
+				m.CurrentProject.Characters = chars
+			}
+		}
+	case ScreenLocations:
+		if m.CurrentProject.Locations == nil || len(m.CurrentProject.Locations) == 0 {
+			locs, err := storage.LoadAllLocations(m.CurrentProject.Directory)
+			if err == nil {
+				m.CurrentProject.Locations = locs
+			}
+		}
+	}
+}
+
 // handleKeyPress handles keyboard input
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Store previous screen to detect changes
+	prevScreen := m.CurrentScreen
+
 	// Global shortcuts
 	switch msg.String() {
 	case "ctrl+c", "ctrl+q":
@@ -199,6 +235,7 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Show help
 		m.PreviousScreen = m.CurrentScreen
 		m.CurrentScreen = ScreenHelp
+		m.ensureDataLoaded()
 		return m, nil
 	}
 
@@ -211,9 +248,19 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ScreenEditor:
 		return m.handleEditorKeys(msg)
 	case ScreenCharacters:
-		return m.handleCharactersKeys(msg)
+		updatedModel, cmd := m.handleCharactersKeys(msg)
+		m = updatedModel.(Model)
+		if m.CurrentScreen != prevScreen {
+			m.ensureDataLoaded()
+		}
+		return m, cmd
 	case ScreenScenes:
-		return m.handleScenesKeys(msg)
+		updatedModel, cmd := m.handleScenesKeys(msg)
+		m = updatedModel.(Model)
+		if m.CurrentScreen != prevScreen {
+			m.ensureDataLoaded()
+		}
+		return m, cmd
 	case ScreenLocations:
 		return m.handleLocationsKeys(msg)
 	case ScreenTextEditor:
@@ -227,9 +274,19 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ScreenAISuggestion:
 		return m.handleAISuggestionKeys(msg)
 	case ScreenRelationshipMap:
-		return m.handleRelationshipMapKeys(msg)
+		updatedModel, cmd := m.handleRelationshipMapKeys(msg)
+		m = updatedModel.(Model)
+		if m.CurrentScreen != prevScreen {
+			m.ensureDataLoaded()
+		}
+		return m, cmd
 	case ScreenSceneValidation:
-		return m.handleSceneValidationKeys(msg)
+		updatedModel, cmd := m.handleSceneValidationKeys(msg)
+		m = updatedModel.(Model)
+		if m.CurrentScreen != prevScreen {
+			m.ensureDataLoaded()
+		}
+		return m, cmd
 	}
 
 	return m, nil

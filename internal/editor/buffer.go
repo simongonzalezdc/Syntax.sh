@@ -26,18 +26,207 @@ type SearchResult struct {
 	Text string
 }
 
-// BufferState represents a snapshot for undo/redo
-type BufferState struct {
-	Lines      []string
-	CursorLine int
-	CursorCol  int
-	Timestamp  time.Time
+// EditCommand represents a single edit operation
+type EditCommand interface {
+	Undo(b *Buffer)
+	Redo(b *Buffer)
+	GetCursor() (line, col int)
 }
 
-// EditHistory manages undo/redo
+// InsertRuneCommand represents inserting a single character
+type InsertRuneCommand struct {
+	Line      int
+	Col       int
+	Rune      rune
+	PrevLine  int
+	PrevCol   int
+	Timestamp time.Time
+}
+
+func (c *InsertRuneCommand) Undo(b *Buffer) {
+	if c.Line < 0 || c.Line >= len(b.lines) {
+		return
+	}
+	line := b.lines[c.Line]
+	if c.Col > 0 && c.Col <= len(line) {
+		b.lines[c.Line] = line[:c.Col-1] + line[c.Col:]
+	}
+	b.cursorLine = c.PrevLine
+	b.cursorCol = c.PrevCol
+}
+
+func (c *InsertRuneCommand) Redo(b *Buffer) {
+	if c.Line < 0 || c.Line >= len(b.lines) {
+		return
+	}
+	line := b.lines[c.Line]
+	if c.Col >= 0 && c.Col <= len(line) {
+		b.lines[c.Line] = line[:c.Col] + string(c.Rune) + line[c.Col:]
+	}
+	b.cursorLine = c.Line
+	b.cursorCol = c.Col + 1
+}
+
+func (c *InsertRuneCommand) GetCursor() (line, col int) {
+	return c.Line, c.Col + 1
+}
+
+// InsertNewlineCommand represents inserting a newline
+type InsertNewlineCommand struct {
+	Line      int
+	Col       int
+	After     string // Text after cursor that moved to new line
+	PrevLine  int
+	PrevCol   int
+	Timestamp time.Time
+}
+
+func (c *InsertNewlineCommand) Undo(b *Buffer) {
+	if c.Line < 0 || c.Line >= len(b.lines) || c.Line+1 >= len(b.lines) {
+		return
+	}
+	// Merge the split lines back together
+	b.lines[c.Line] = b.lines[c.Line] + c.After
+	b.lines = append(b.lines[:c.Line+1], b.lines[c.Line+2:]...)
+	b.cursorLine = c.PrevLine
+	b.cursorCol = c.PrevCol
+}
+
+func (c *InsertNewlineCommand) Redo(b *Buffer) {
+	if c.Line < 0 || c.Line >= len(b.lines) {
+		return
+	}
+	line := b.lines[c.Line]
+	before := line[:c.Col]
+	b.lines[c.Line] = before
+	b.lines = append(b.lines[:c.Line+1], append([]string{c.After}, b.lines[c.Line+1:]...)...)
+	b.cursorLine = c.Line + 1
+	b.cursorCol = 0
+}
+
+func (c *InsertNewlineCommand) GetCursor() (line, col int) {
+	return c.Line + 1, 0
+}
+
+// DeleteCharCommand represents deleting a character
+type DeleteCharCommand struct {
+	Line      int
+	Col       int
+	Deleted   rune   // What was deleted
+	WasMerge  bool   // Was this a line merge?
+	PrevLine  string // Previous line content if merge
+	PrevLine2 int    // Previous cursor line
+	PrevCol2  int    // Previous cursor col
+	Timestamp time.Time
+}
+
+// ReplaceAllCommand represents a bulk find/replace operation
+type ReplaceAllCommand struct {
+	Replacements []struct {
+		Line        int
+		Col         int
+		OldText     string
+		NewText     string
+		OrigContent string // Original line content for undo
+	}
+	PrevLine  int
+	PrevCol   int
+	Timestamp time.Time
+}
+
+func (c *DeleteCharCommand) Undo(b *Buffer) {
+	if c.WasMerge {
+		// Un-merge lines
+		if c.Line < 0 || c.Line >= len(b.lines) {
+			return
+		}
+		currLine := b.lines[c.Line]
+		splitPos := len(c.PrevLine)
+		before := currLine[:splitPos]
+		after := currLine[splitPos:]
+		b.lines[c.Line] = before
+		b.lines = append(b.lines[:c.Line+1], append([]string{after}, b.lines[c.Line+1:]...)...)
+		b.cursorLine = c.Line + 1
+		b.cursorCol = 0
+	} else {
+		// Re-insert deleted character
+		if c.Line < 0 || c.Line >= len(b.lines) {
+			return
+		}
+		line := b.lines[c.Line]
+		if c.Col >= 0 && c.Col <= len(line) {
+			b.lines[c.Line] = line[:c.Col] + string(c.Deleted) + line[c.Col:]
+		}
+		b.cursorLine = c.PrevLine2
+		b.cursorCol = c.PrevCol2
+	}
+}
+
+func (c *DeleteCharCommand) Redo(b *Buffer) {
+	if c.WasMerge {
+		// Re-merge lines
+		if c.Line < 0 || c.Line >= len(b.lines) || c.Line+1 >= len(b.lines) {
+			return
+		}
+		prevLine := b.lines[c.Line]
+		currLine := b.lines[c.Line+1]
+		b.lines[c.Line] = prevLine + currLine
+		b.lines = append(b.lines[:c.Line+1], b.lines[c.Line+2:]...)
+		b.cursorLine = c.Line
+		b.cursorCol = len(prevLine)
+	} else {
+		// Re-delete character
+		if c.Line < 0 || c.Line >= len(b.lines) {
+			return
+		}
+		line := b.lines[c.Line]
+		if c.Col > 0 && c.Col <= len(line) {
+			b.lines[c.Line] = line[:c.Col-1] + line[c.Col:]
+			b.cursorLine = c.Line
+			b.cursorCol = c.Col - 1
+		}
+	}
+}
+
+func (c *DeleteCharCommand) GetCursor() (line, col int) {
+	if c.WasMerge {
+		return c.Line, len(c.PrevLine)
+	}
+	return c.Line, c.Col - 1
+}
+
+func (c *ReplaceAllCommand) Undo(b *Buffer) {
+	// Restore original line contents in reverse order
+	for i := len(c.Replacements) - 1; i >= 0; i-- {
+		repl := c.Replacements[i]
+		if repl.Line >= 0 && repl.Line < len(b.lines) {
+			b.lines[repl.Line] = repl.OrigContent
+		}
+	}
+	b.cursorLine = c.PrevLine
+	b.cursorCol = c.PrevCol
+}
+
+func (c *ReplaceAllCommand) Redo(b *Buffer) {
+	// Re-apply all replacements
+	for _, repl := range c.Replacements {
+		if repl.Line >= 0 && repl.Line < len(b.lines) {
+			line := b.lines[repl.Line]
+			before := line[:repl.Col]
+			after := line[repl.Col+len(repl.OldText):]
+			b.lines[repl.Line] = before + repl.NewText + after
+		}
+	}
+}
+
+func (c *ReplaceAllCommand) GetCursor() (line, col int) {
+	return c.PrevLine, c.PrevCol
+}
+
+// EditHistory manages undo/redo with delta-based commands
 type EditHistory struct {
-	past    []BufferState
-	future  []BufferState
+	past    []EditCommand
+	future  []EditCommand
 	maxSize int
 }
 
@@ -54,8 +243,8 @@ func NewBuffer(content string) *Buffer {
 		cursorCol:  0,
 		modified:   false,
 		history: &EditHistory{
-			past:    make([]BufferState, 0, 100),
-			future:  make([]BufferState, 0, 100),
+			past:    make([]EditCommand, 0, 100),
+			future:  make([]EditCommand, 0, 100),
 			maxSize: 100,
 		},
 	}
@@ -106,7 +295,16 @@ func (b *Buffer) InsertRune(r rune) {
 		b.cursorCol = len(line)
 	}
 
-	b.recordState()
+	// Record command for undo
+	cmd := &InsertRuneCommand{
+		Line:      b.cursorLine,
+		Col:       b.cursorCol,
+		Rune:      r,
+		PrevLine:  b.cursorLine,
+		PrevCol:   b.cursorCol,
+		Timestamp: time.Now(),
+	}
+	b.recordCommand(cmd)
 
 	before := line[:b.cursorCol]
 	after := line[b.cursorCol:]
@@ -132,10 +330,19 @@ func (b *Buffer) InsertNewline() {
 		b.cursorCol = len(line)
 	}
 
-	b.recordState()
-
 	before := line[:b.cursorCol]
 	after := line[b.cursorCol:]
+
+	// Record command for undo
+	cmd := &InsertNewlineCommand{
+		Line:      b.cursorLine,
+		Col:       b.cursorCol,
+		After:     after,
+		PrevLine:  b.cursorLine,
+		PrevCol:   b.cursorCol,
+		Timestamp: time.Now(),
+	}
+	b.recordCommand(cmd)
 
 	b.lines[b.cursorLine] = before
 	// Insert new line after current
@@ -156,9 +363,22 @@ func (b *Buffer) DeleteChar() {
 	if b.cursorCol == 0 {
 		// At start of line - merge with previous
 		if b.cursorLine > 0 {
-			b.recordState()
 			prevLine := b.lines[b.cursorLine-1]
 			currLine := b.lines[b.cursorLine]
+
+			// Record command for undo
+			cmd := &DeleteCharCommand{
+				Line:      b.cursorLine - 1,
+				Col:       b.cursorCol,
+				Deleted:   '\n', // Newline deletion
+				WasMerge:  true,
+				PrevLine:  prevLine,
+				PrevLine2: b.cursorLine,
+				PrevCol2:  b.cursorCol,
+				Timestamp: time.Now(),
+			}
+			b.recordCommand(cmd)
+
 			b.lines[b.cursorLine-1] = prevLine + currLine
 			b.lines = append(b.lines[:b.cursorLine], b.lines[b.cursorLine+1:]...)
 			b.cursorLine--
@@ -172,7 +392,21 @@ func (b *Buffer) DeleteChar() {
 			b.cursorCol = len(line)
 		}
 		if b.cursorCol > 0 {
-			b.recordState()
+			// Get the character being deleted
+			deleted := rune(line[b.cursorCol-1])
+
+			// Record command for undo
+			cmd := &DeleteCharCommand{
+				Line:      b.cursorLine,
+				Col:       b.cursorCol,
+				Deleted:   deleted,
+				WasMerge:  false,
+				PrevLine2: b.cursorLine,
+				PrevCol2:  b.cursorCol,
+				Timestamp: time.Now(),
+			}
+			b.recordCommand(cmd)
+
 			before := line[:b.cursorCol-1]
 			after := line[b.cursorCol:]
 			b.lines[b.cursorLine] = before + after
@@ -241,78 +475,52 @@ func (b *Buffer) SetModified(modified bool) {
 	b.modified = modified
 }
 
-// recordState saves current state for undo
-func (b *Buffer) recordState() {
-	// Only keep last 100 states
+// recordCommand records an edit command for undo/redo
+func (b *Buffer) recordCommand(cmd EditCommand) {
+	// Only keep last maxSize commands
 	if len(b.history.past) >= b.history.maxSize {
 		b.history.past = b.history.past[1:]
 	}
 
-	state := BufferState{
-		Lines:      make([]string, len(b.lines)),
-		CursorLine: b.cursorLine,
-		CursorCol:  b.cursorCol,
-		Timestamp:  time.Now(),
-	}
-	copy(state.Lines, b.lines)
-
-	b.history.past = append(b.history.past, state)
+	b.history.past = append(b.history.past, cmd)
 	b.history.future = nil // Clear redo stack
 }
 
-// Undo reverts to previous state
+// Undo reverts the last edit operation
 func (b *Buffer) Undo() bool {
 	if len(b.history.past) == 0 {
 		return false
 	}
 
-	// Save current state to future
-	current := BufferState{
-		Lines:      make([]string, len(b.lines)),
-		CursorLine: b.cursorLine,
-		CursorCol:  b.cursorCol,
-		Timestamp:  time.Now(),
-	}
-	copy(current.Lines, b.lines)
-	b.history.future = append(b.history.future, current)
-
-	// Restore previous state
-	prev := b.history.past[len(b.history.past)-1]
+	// Get the last command
+	cmd := b.history.past[len(b.history.past)-1]
 	b.history.past = b.history.past[:len(b.history.past)-1]
 
-	b.lines = make([]string, len(prev.Lines))
-	copy(b.lines, prev.Lines)
-	b.cursorLine = prev.CursorLine
-	b.cursorCol = prev.CursorCol
+	// Undo the command
+	cmd.Undo(b)
+
+	// Move command to future for redo
+	b.history.future = append(b.history.future, cmd)
 	b.modified = true
 
 	return true
 }
 
-// Redo re-applies previously undone change
+// Redo re-applies a previously undone edit operation
 func (b *Buffer) Redo() bool {
 	if len(b.history.future) == 0 {
 		return false
 	}
 
-	// Save current to past
-	current := BufferState{
-		Lines:      make([]string, len(b.lines)),
-		CursorLine: b.cursorLine,
-		CursorCol:  b.cursorCol,
-		Timestamp:  time.Now(),
-	}
-	copy(current.Lines, b.lines)
-	b.history.past = append(b.history.past, current)
-
-	// Restore future state
-	next := b.history.future[len(b.history.future)-1]
+	// Get the last undone command
+	cmd := b.history.future[len(b.history.future)-1]
 	b.history.future = b.history.future[:len(b.history.future)-1]
 
-	b.lines = make([]string, len(next.Lines))
-	copy(b.lines, next.Lines)
-	b.cursorLine = next.CursorLine
-	b.cursorCol = next.CursorCol
+	// Redo the command
+	cmd.Redo(b)
+
+	// Move command back to past
+	b.history.past = append(b.history.past, cmd)
 	b.modified = true
 
 	return true
@@ -418,7 +626,31 @@ func (b *Buffer) ReplaceAll(searchTerm, replacement string, caseSensitive bool) 
 		return 0
 	}
 
-	b.recordState()
+	// Build the replace command
+	cmd := &ReplaceAllCommand{
+		Replacements: make([]struct {
+			Line        int
+			Col         int
+			OldText     string
+			NewText     string
+			OrigContent string
+		}, len(b.searchResults)),
+		PrevLine:  b.cursorLine,
+		PrevCol:   b.cursorCol,
+		Timestamp: time.Now(),
+	}
+
+	// Store replacement info
+	for i, result := range b.searchResults {
+		cmd.Replacements[i].Line = result.Line
+		cmd.Replacements[i].Col = result.Col
+		cmd.Replacements[i].OldText = searchTerm
+		cmd.Replacements[i].NewText = replacement
+		cmd.Replacements[i].OrigContent = b.lines[result.Line]
+	}
+
+	// Record the command
+	b.recordCommand(cmd)
 
 	// Replace in reverse order to avoid index shifting
 	for i := len(b.searchResults) - 1; i >= 0; i-- {

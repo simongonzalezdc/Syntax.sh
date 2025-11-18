@@ -22,13 +22,7 @@ func (m Model) viewScenes() string {
 	b.WriteString(titleBar)
 	b.WriteString("\n\n")
 
-	// Load scenes if not loaded
-	if m.CurrentProject.Scenes == nil || len(m.CurrentProject.Scenes) == 0 {
-		scenes, err := storage.LoadAllScenes(m.CurrentProject.Directory)
-		if err == nil {
-			m.CurrentProject.Scenes = scenes
-		}
-	}
+	// Data is loaded in Update via ensureDataLoaded()
 
 	b.WriteString(m.Styles.Heading.Render("📝 Scenes"))
 	b.WriteString("\n\n")
