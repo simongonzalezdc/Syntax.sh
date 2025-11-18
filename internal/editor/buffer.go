@@ -12,6 +12,18 @@ type Buffer struct {
 	cursorCol  int
 	modified   bool
 	history    *EditHistory
+
+	// Search state
+	searchTerm    string
+	searchResults []SearchResult
+	searchIndex   int
+}
+
+// SearchResult represents a search match
+type SearchResult struct {
+	Line int
+	Col  int
+	Text string
 }
 
 // BufferState represents a snapshot for undo/redo
@@ -79,9 +91,23 @@ func (b *Buffer) CursorPosition() (line, col int) {
 
 // InsertRune inserts a character at cursor position
 func (b *Buffer) InsertRune(r rune) {
-	b.recordState()
+	// Validate cursor position
+	if b.cursorLine < 0 || b.cursorLine >= len(b.lines) {
+		return
+	}
 
 	line := b.lines[b.cursorLine]
+
+	// Clamp cursor column to valid range
+	if b.cursorCol < 0 {
+		b.cursorCol = 0
+	}
+	if b.cursorCol > len(line) {
+		b.cursorCol = len(line)
+	}
+
+	b.recordState()
+
 	before := line[:b.cursorCol]
 	after := line[b.cursorCol:]
 	b.lines[b.cursorLine] = before + string(r) + after
@@ -91,9 +117,23 @@ func (b *Buffer) InsertRune(r rune) {
 
 // InsertNewline inserts a newline at cursor position
 func (b *Buffer) InsertNewline() {
-	b.recordState()
+	// Validate cursor position
+	if b.cursorLine < 0 || b.cursorLine >= len(b.lines) {
+		return
+	}
 
 	line := b.lines[b.cursorLine]
+
+	// Clamp cursor column to valid range
+	if b.cursorCol < 0 {
+		b.cursorCol = 0
+	}
+	if b.cursorCol > len(line) {
+		b.cursorCol = len(line)
+	}
+
+	b.recordState()
+
 	before := line[:b.cursorCol]
 	after := line[b.cursorCol:]
 
@@ -108,6 +148,11 @@ func (b *Buffer) InsertNewline() {
 
 // DeleteChar deletes character before cursor (backspace)
 func (b *Buffer) DeleteChar() {
+	// Validate cursor position
+	if b.cursorLine < 0 || b.cursorLine >= len(b.lines) {
+		return
+	}
+
 	if b.cursorCol == 0 {
 		// At start of line - merge with previous
 		if b.cursorLine > 0 {
@@ -121,13 +166,19 @@ func (b *Buffer) DeleteChar() {
 			b.modified = true
 		}
 	} else {
-		b.recordState()
+		// Ensure cursorCol is within bounds
 		line := b.lines[b.cursorLine]
-		before := line[:b.cursorCol-1]
-		after := line[b.cursorCol:]
-		b.lines[b.cursorLine] = before + after
-		b.cursorCol--
-		b.modified = true
+		if b.cursorCol > len(line) {
+			b.cursorCol = len(line)
+		}
+		if b.cursorCol > 0 {
+			b.recordState()
+			before := line[:b.cursorCol-1]
+			after := line[b.cursorCol:]
+			b.lines[b.cursorLine] = before + after
+			b.cursorCol--
+			b.modified = true
+		}
 	}
 }
 
@@ -265,4 +316,120 @@ func (b *Buffer) Redo() bool {
 	b.modified = true
 
 	return true
+}
+
+// Find searches for the given term and stores results
+func (b *Buffer) Find(term string, caseSensitive bool) int {
+	b.searchTerm = term
+	b.searchResults = nil
+	b.searchIndex = -1
+
+	if term == "" {
+		return 0
+	}
+
+	searchTerm := term
+	if !caseSensitive {
+		searchTerm = strings.ToLower(term)
+	}
+
+	for lineNum, line := range b.lines {
+		searchLine := line
+		if !caseSensitive {
+			searchLine = strings.ToLower(line)
+		}
+
+		col := 0
+		for {
+			idx := strings.Index(searchLine[col:], searchTerm)
+			if idx == -1 {
+				break
+			}
+
+			actualCol := col + idx
+			b.searchResults = append(b.searchResults, SearchResult{
+				Line: lineNum,
+				Col:  actualCol,
+				Text: line[actualCol : actualCol+len(term)],
+			})
+			col = actualCol + 1
+		}
+	}
+
+	if len(b.searchResults) > 0 {
+		b.searchIndex = 0
+		// Jump to first result
+		b.cursorLine = b.searchResults[0].Line
+		b.cursorCol = b.searchResults[0].Col
+	}
+
+	return len(b.searchResults)
+}
+
+// FindNext jumps to the next search result
+func (b *Buffer) FindNext() bool {
+	if len(b.searchResults) == 0 {
+		return false
+	}
+
+	b.searchIndex = (b.searchIndex + 1) % len(b.searchResults)
+	result := b.searchResults[b.searchIndex]
+	b.cursorLine = result.Line
+	b.cursorCol = result.Col
+	return true
+}
+
+// FindPrevious jumps to the previous search result
+func (b *Buffer) FindPrevious() bool {
+	if len(b.searchResults) == 0 {
+		return false
+	}
+
+	b.searchIndex--
+	if b.searchIndex < 0 {
+		b.searchIndex = len(b.searchResults) - 1
+	}
+
+	result := b.searchResults[b.searchIndex]
+	b.cursorLine = result.Line
+	b.cursorCol = result.Col
+	return true
+}
+
+// ClearSearch clears the search results
+func (b *Buffer) ClearSearch() {
+	b.searchTerm = ""
+	b.searchResults = nil
+	b.searchIndex = -1
+}
+
+// GetSearchInfo returns current search information
+func (b *Buffer) GetSearchInfo() (term string, current int, total int) {
+	if len(b.searchResults) == 0 {
+		return b.searchTerm, 0, 0
+	}
+	return b.searchTerm, b.searchIndex + 1, len(b.searchResults)
+}
+
+// ReplaceAll replaces all occurrences of the search term
+func (b *Buffer) ReplaceAll(searchTerm, replacement string, caseSensitive bool) int {
+	count := b.Find(searchTerm, caseSensitive)
+	if count == 0 {
+		return 0
+	}
+
+	b.recordState()
+
+	// Replace in reverse order to avoid index shifting
+	for i := len(b.searchResults) - 1; i >= 0; i-- {
+		result := b.searchResults[i]
+		line := b.lines[result.Line]
+		before := line[:result.Col]
+		after := line[result.Col+len(searchTerm):]
+		b.lines[result.Line] = before + replacement + after
+	}
+
+	b.modified = true
+	b.ClearSearch()
+	return count
 }

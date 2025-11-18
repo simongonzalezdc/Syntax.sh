@@ -2,11 +2,13 @@ package app
 
 import (
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyanite/syntax/internal/ai"
 	"github.com/kyanite/syntax/internal/editor"
 	"github.com/kyanite/syntax/internal/scene"
+	"github.com/kyanite/syntax/internal/storage"
 	"github.com/kyanite/syntax/internal/story"
 	"github.com/kyanite/syntax/internal/theme"
 )
@@ -58,6 +60,28 @@ type Model struct {
 	AIClient      *ai.Client
 	AISuggestion  *ai.Suggestion
 	AIGenerating  bool
+
+	// Auto-save state
+	LastSaveTime   time.Time
+	SaveStatus     SaveStatus
+	LastEditTime   time.Time
+}
+
+// SaveStatus represents the current save state
+type SaveStatus int
+
+const (
+	SaveStatusSaved SaveStatus = iota
+	SaveStatusSaving
+	SaveStatusUnsaved
+)
+
+// AutoSaveTickMsg is sent periodically to trigger auto-save check
+type AutoSaveTickMsg struct{}
+
+// AutoSaveCompleteMsg is sent when auto-save completes
+type AutoSaveCompleteMsg struct {
+	Err error
 }
 
 // NewModel creates a new root model
@@ -71,12 +95,22 @@ func NewModel() Model {
 		CurrentTheme:  currentTheme,
 		Styles:        currentTheme.ApplyTheme(),
 		SelectedIndex: 0,
+		SaveStatus:    SaveStatusSaved,
+		LastSaveTime:  time.Now(),
 	}
+}
+
+// autoSaveTick creates a periodic tick command for auto-save
+func autoSaveTick() tea.Cmd {
+	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg {
+		return AutoSaveTickMsg{}
+	})
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return nil
+	// Start auto-save ticker
+	return autoSaveTick()
 }
 
 // Update handles messages
@@ -93,9 +127,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AISuggestionMsg:
 		m = m.HandleAISuggestionMsg(msg)
 		return m, nil
+
+	case AutoSaveTickMsg:
+		// Check if auto-save is needed
+		cmd := m.checkAutoSave()
+		// Schedule next tick
+		return m, tea.Batch(cmd, autoSaveTick())
+
+	case AutoSaveCompleteMsg:
+		if msg.Err != nil {
+			m.SaveStatus = SaveStatusUnsaved
+			m.Error = msg.Err
+		} else {
+			m.SaveStatus = SaveStatusSaved
+			m.LastSaveTime = time.Now()
+			if m.Buffer != nil {
+				m.Buffer.SetModified(false)
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
+}
+
+// checkAutoSave performs auto-save if needed
+func (m *Model) checkAutoSave() tea.Cmd {
+	// Only auto-save in text editor with unsaved changes
+	if m.CurrentScreen != ScreenTextEditor || m.Buffer == nil || m.CurrentScene == nil || m.CurrentProject == nil {
+		return nil
+	}
+
+	// Check if buffer has been modified
+	if !m.Buffer.IsModified() {
+		return nil
+	}
+
+	// Check if enough time has passed since last edit (3 seconds idle)
+	if time.Since(m.LastEditTime) < 3*time.Second {
+		return nil
+	}
+
+	// Perform auto-save
+	m.SaveStatus = SaveStatusSaving
+	projectDir := m.CurrentProject.Directory
+	scene := m.CurrentScene
+	content := m.Buffer.GetContent()
+
+	return func() tea.Msg {
+		scene.Content = content
+		err := storage.SaveScene(projectDir, scene)
+		return AutoSaveCompleteMsg{Err: err}
+	}
 }
 
 // handleKeyPress handles keyboard input

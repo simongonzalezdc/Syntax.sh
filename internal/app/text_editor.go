@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyanite/syntax/internal/storage"
@@ -14,6 +15,8 @@ type EditorMode int
 const (
 	EditorModeNormal EditorMode = iota
 	EditorModeInsert
+	EditorModeSearch
+	EditorModeReplace
 )
 
 func (m Model) viewTextEditor() string {
@@ -63,10 +66,22 @@ func (m Model) viewTextEditor() string {
 		b.WriteString("\n")
 	}
 
+	// Search input box (overlay when in search mode)
+	if m.EditorMode == EditorModeSearch && m.InputMode {
+		searchBox := m.Styles.Accent.Render(fmt.Sprintf(" Find: %s█ ", m.InputValue))
+		b.WriteString(searchBox)
+		b.WriteString("\n")
+	}
+
 	// Status bar
 	mode := "NORMAL"
-	if m.EditorMode == EditorModeInsert {
+	switch m.EditorMode {
+	case EditorModeInsert:
 		mode = "INSERT"
+	case EditorModeSearch:
+		mode = "SEARCH"
+	case EditorModeReplace:
+		mode = "REPLACE"
 	}
 
 	line, col := m.Buffer.CursorPosition()
@@ -77,9 +92,40 @@ func (m Model) viewTextEditor() string {
 		aiStatus = " | AI: ON"
 	}
 
+	// Save status indicator
+	saveStatus := ""
+	switch m.SaveStatus {
+	case SaveStatusSaved:
+		elapsed := time.Since(m.LastSaveTime)
+		if elapsed < time.Minute {
+			saveStatus = fmt.Sprintf(" | Saved %ds ago", int(elapsed.Seconds()))
+		} else {
+			saveStatus = fmt.Sprintf(" | Saved %dm ago", int(elapsed.Minutes()))
+		}
+	case SaveStatusSaving:
+		saveStatus = " | Saving..."
+	case SaveStatusUnsaved:
+		if m.Buffer.IsModified() {
+			saveStatus = " | Unsaved changes"
+		}
+	}
+
+	// Search info
+	searchInfo := ""
+	if m.EditorMode == EditorModeSearch || m.EditorMode == EditorModeReplace {
+		searchTerm, current, total := m.Buffer.GetSearchInfo()
+		if total > 0 {
+			searchInfo = fmt.Sprintf(" | Search: '%s' (%d/%d)", searchTerm, current, total)
+		} else if searchTerm != "" {
+			searchInfo = fmt.Sprintf(" | Search: '%s' (no matches)", searchTerm)
+		} else {
+			searchInfo = " | Enter search term"
+		}
+	}
+
 	statusBar := m.Styles.StatusBar.Render(fmt.Sprintf(
-		" %s | Line %d:%d | Words: %d%s | Ctrl+S: Save | Ctrl+A: AI | Esc: Exit ",
-		mode, line+1, col+1, wordCount, aiStatus))
+		" %s | Line %d:%d | Words: %d%s%s%s | Ctrl+F: Find | Ctrl+S: Save | Esc: Exit ",
+		mode, line+1, col+1, wordCount, aiStatus, saveStatus, searchInfo))
 	b.WriteString(statusBar)
 
 	return b.String()
@@ -180,6 +226,49 @@ func (m Model) renderMarkdownLine(line string) string {
 }
 
 func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle search mode
+	if m.EditorMode == EditorModeSearch {
+		switch msg.String() {
+		case "esc":
+			m.EditorMode = EditorModeNormal
+			m.Buffer.ClearSearch()
+			m.InputMode = false
+			m.InputValue = ""
+			return m, nil
+		case "enter":
+			// Perform search
+			if m.InputValue != "" {
+				count := m.Buffer.Find(m.InputValue, false)
+				if count == 0 {
+					m.Message = "No matches found"
+				} else {
+					m.Message = fmt.Sprintf("Found %d matches", count)
+				}
+			}
+			m.InputMode = false
+			return m, nil
+		case "ctrl+n", "n":
+			// Find next
+			m.Buffer.FindNext()
+			return m, nil
+		case "ctrl+p", "p":
+			// Find previous
+			m.Buffer.FindPrevious()
+			return m, nil
+		case "backspace":
+			if m.InputMode && len(m.InputValue) > 0 {
+				m.InputValue = m.InputValue[:len(m.InputValue)-1]
+			}
+			return m, nil
+		default:
+			// Add character to search input
+			if m.InputMode && len(msg.String()) == 1 {
+				m.InputValue += msg.String()
+			}
+			return m, nil
+		}
+	}
+
 	// Mode switching
 	if m.EditorMode == EditorModeNormal {
 		switch msg.String() {
@@ -193,18 +282,37 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				storage.SaveScene(m.CurrentProject.Directory, m.CurrentScene)
 				m.Message = "Scene saved"
 			}
+			m.Buffer.ClearSearch()
 			m.CurrentScene = nil
 			m.Buffer = nil
 			m.CurrentScreen = ScreenScenes
 			return m, nil
+		case "ctrl+f":
+			// Enter search mode
+			m.EditorMode = EditorModeSearch
+			m.InputMode = true
+			m.InputValue = ""
+			return m, nil
+		case "n":
+			// Find next (if search active)
+			m.Buffer.FindNext()
+			return m, nil
+		case "N":
+			// Find previous (if search active)
+			m.Buffer.FindPrevious()
+			return m, nil
 		case "ctrl+s":
-			// Save
+			// Manual save
+			m.SaveStatus = SaveStatusSaving
 			m.CurrentScene.Content = m.Buffer.GetContent()
 			err := storage.SaveScene(m.CurrentProject.Directory, m.CurrentScene)
 			if err != nil {
 				m.Error = err
+				m.SaveStatus = SaveStatusUnsaved
 			} else {
 				m.Buffer.SetModified(false)
+				m.SaveStatus = SaveStatusSaved
+				m.LastSaveTime = time.Now()
 				m.Message = "Saved"
 			}
 			return m, nil
@@ -232,9 +340,13 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "enter":
 			m.Buffer.InsertNewline()
+			m.LastEditTime = time.Now()
+			m.SaveStatus = SaveStatusUnsaved
 			return m, nil
 		case "backspace":
 			m.Buffer.DeleteChar()
+			m.LastEditTime = time.Now()
+			m.SaveStatus = SaveStatusUnsaved
 			return m, nil
 		case "up":
 			m.Buffer.MoveCursorUp()
@@ -252,6 +364,8 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Regular character input
 			if len(msg.String()) == 1 {
 				m.Buffer.InsertRune(rune(msg.String()[0]))
+				m.LastEditTime = time.Now()
+				m.SaveStatus = SaveStatusUnsaved
 				return m, nil
 			}
 		}
