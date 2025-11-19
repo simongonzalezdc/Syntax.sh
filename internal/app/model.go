@@ -38,43 +38,67 @@ const (
 )
 
 // Model is the root Bubble Tea model
+// It follows a centralized state management pattern where all application state
+// is held in one place. While this creates a large struct, it simplifies state
+// management and message passing in the Bubble Tea architecture.
 type Model struct {
-	CurrentScreen  Screen
-	Width          int
-	Height         int
-	ThemeManager   *theme.Manager
-	CurrentTheme   theme.Theme
-	Styles         theme.Styles
-	CurrentProject *story.Project
-	Message        string
-	Error          error
+	// ============================================================
+	// UI State - Screen management and window dimensions
+	// ============================================================
+	CurrentScreen  Screen // Current active screen
+	PreviousScreen Screen // Previous screen for back navigation
+	Width          int    // Terminal width
+	Height         int    // Terminal height
 
-	// Sub-models
-	Projects      []*story.Project
-	SelectedIndex int
-	InputMode     bool
-	InputValue    string
-	ReplaceValue  string // Used for find & replace
+	// ============================================================
+	// Theme State - Visual styling and appearance
+	// ============================================================
+	ThemeManager *theme.Manager // Manages theme switching
+	CurrentTheme theme.Theme    // Active theme
+	Styles       theme.Styles   // Computed styles from theme
 
-	// Editor state
-	CurrentScene    *scene.Scene
-	CurrentLocation *location.Location
-	Buffer          *editor.Buffer
-	EditorMode      EditorMode
-	PreviousScreen  Screen
+	// ============================================================
+	// Project State - Story projects and data
+	// ============================================================
+	CurrentProject *story.Project     // Active project being edited
+	Projects       []*story.Project   // List of available projects
 
-	// AI Assistant state
-	AIClient      *ai.Client
-	AISuggestion  *ai.Suggestion
-	AIGenerating  bool
+	// ============================================================
+	// Input State - User input handling
+	// ============================================================
+	SelectedIndex int    // Index of selected item in lists
+	InputMode     bool   // Whether input field is active
+	InputValue    string // Current input field value
+	ReplaceValue  string // Replacement value for find & replace
 
-	// Auto-save state
-	LastSaveTime   time.Time
-	SaveStatus     SaveStatus
-	LastEditTime   time.Time
+	// ============================================================
+	// Editor State - Text editing and buffer management
+	// ============================================================
+	CurrentScene    *scene.Scene       // Scene being edited
+	CurrentLocation *location.Location // Location being edited
+	Buffer          *editor.Buffer     // Text editor buffer
+	EditorMode      EditorMode         // Editor mode (normal/insert/search/replace)
 
-	// Spell check state
-	SpellChecker *spellcheck.Checker
+	// ============================================================
+	// Feature Integrations - AI and spell checking
+	// ============================================================
+	AIClient     *ai.Client           // AI assistant client
+	AISuggestion *ai.Suggestion       // Current AI suggestion
+	AIGenerating bool                 // Whether AI is generating
+	SpellChecker *spellcheck.Checker  // Spell check integration
+
+	// ============================================================
+	// Auto-save State - Automatic saving and status
+	// ============================================================
+	LastSaveTime time.Time   // Time of last save
+	SaveStatus   SaveStatus  // Current save status
+	LastEditTime time.Time   // Time of last edit (for auto-save)
+
+	// ============================================================
+	// User Feedback - Messages and errors
+	// ============================================================
+	Message string // Status message to display
+	Error   error  // Current error if any
 }
 
 // SaveStatus represents the current save state
@@ -164,18 +188,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // checkAutoSave performs auto-save if needed
 func (m *Model) checkAutoSave() tea.Cmd {
-	// Only auto-save in text editor with unsaved changes
-	if m.CurrentScreen != ScreenTextEditor || m.Buffer == nil || m.CurrentScene == nil || m.CurrentProject == nil {
-		return nil
-	}
-
-	// Check if buffer has been modified
-	if !m.Buffer.IsModified() {
-		return nil
-	}
-
-	// Check if enough time has passed since last edit (3 seconds idle)
-	if time.Since(m.LastEditTime) < 3*time.Second {
+	if !m.CanAutoSave() {
 		return nil
 	}
 
@@ -341,4 +354,102 @@ func (m Model) View() string {
 	default:
 		return "Unknown screen"
 	}
+}
+
+// ============================================================
+// Helper Methods - Encapsulate common state checks and operations
+// ============================================================
+
+// HasProject returns whether a project is currently loaded
+func (m *Model) HasProject() bool {
+	return m.CurrentProject != nil
+}
+
+// HasUnsavedChanges returns whether there are unsaved changes in the editor
+func (m *Model) HasUnsavedChanges() bool {
+	return m.Buffer != nil && m.Buffer.IsModified()
+}
+
+// IsEditorActive returns whether the text editor is currently active
+func (m *Model) IsEditorActive() bool {
+	return m.CurrentScreen == ScreenTextEditor && m.Buffer != nil && m.CurrentScene != nil
+}
+
+// CanAutoSave returns whether auto-save can be performed
+func (m *Model) CanAutoSave() bool {
+	return m.IsEditorActive() &&
+	       m.HasProject() &&
+	       m.HasUnsavedChanges() &&
+	       time.Since(m.LastEditTime) >= 3*time.Second
+}
+
+// ResetInputState clears all input-related state
+func (m *Model) ResetInputState() {
+	m.InputMode = false
+	m.InputValue = ""
+	m.ReplaceValue = ""
+}
+
+// GetContentDimensions returns the available dimensions for content rendering
+// after accounting for title and status bars
+func (m *Model) GetContentDimensions() (width, height int) {
+	return m.Width, m.Height - 4 // Minus title and status bars
+}
+
+// SetMessage sets a status message for the user
+func (m *Model) SetMessage(msg string) {
+	m.Message = msg
+}
+
+// SetError sets an error and clears any status message
+func (m *Model) SetError(err error) {
+	m.Error = err
+	if err != nil {
+		m.Message = ""
+	}
+}
+
+// ClearFeedback clears both messages and errors
+func (m *Model) ClearFeedback() {
+	m.Message = ""
+	m.Error = nil
+}
+
+// SaveCurrentScene saves the current scene with error handling
+// Returns true if save was successful, false otherwise
+func (m *Model) SaveCurrentScene() bool {
+	if !m.HasProject() || m.CurrentScene == nil || m.Buffer == nil {
+		return false
+	}
+
+	m.SaveStatus = SaveStatusSaving
+	m.CurrentScene.Content = m.Buffer.GetContent()
+	err := storage.SaveScene(m.CurrentProject.Directory, m.CurrentScene)
+
+	if err != nil {
+		m.SetError(err)
+		m.SaveStatus = SaveStatusUnsaved
+		return false
+	}
+
+	m.Buffer.SetModified(false)
+	m.SaveStatus = SaveStatusSaved
+	m.LastSaveTime = time.Now()
+	m.SetMessage("Saved")
+	return true
+}
+
+// ExitEditor cleanly exits the text editor, saving if needed
+func (m *Model) ExitEditor(saveIfModified bool) {
+	if saveIfModified && m.HasUnsavedChanges() {
+		m.SaveCurrentScene()
+	}
+
+	if m.Buffer != nil {
+		m.Buffer.ClearSearch()
+	}
+
+	m.CurrentScene = nil
+	m.Buffer = nil
+	m.CurrentScreen = ScreenScenes
 }

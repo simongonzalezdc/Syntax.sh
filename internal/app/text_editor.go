@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/kyanite/syntax/internal/storage"
 )
 
 // EditorMode represents the editor state
@@ -345,8 +344,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.EditorMode = EditorModeNormal
 			m.Buffer.ClearSearch()
-			m.InputMode = false
-			m.InputValue = ""
+			m.ResetInputState()
 			return m, nil
 		case "enter":
 			// Perform search
@@ -390,9 +388,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.EditorMode = EditorModeNormal
 				m.Buffer.ClearSearch()
-				m.InputMode = false
-				m.InputValue = ""
-				m.ReplaceValue = ""
+				m.ResetInputState()
 				return m, nil
 			case "enter":
 				if m.ReplaceValue == "" {
@@ -430,8 +426,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.EditorMode = EditorModeNormal
 				m.Buffer.ClearSearch()
-				m.InputValue = ""
-				m.ReplaceValue = ""
+				m.ResetInputState()
 				return m, nil
 			case "r":
 				// Replace current match
@@ -442,8 +437,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					} else {
 						m.Message = "All matches replaced"
 						m.EditorMode = EditorModeNormal
-						m.ReplaceValue = ""
-						m.InputValue = ""
+						m.ResetInputState()
 					}
 				}
 				m.LastEditTime = time.Now()
@@ -454,8 +448,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				count := m.Buffer.ReplaceAll(m.ReplaceValue, m.InputValue, false)
 				m.Message = fmt.Sprintf("Replaced %d occurrences", count)
 				m.EditorMode = EditorModeNormal
-				m.ReplaceValue = ""
-				m.InputValue = ""
+				m.ResetInputState()
 				m.LastEditTime = time.Now()
 				m.SaveStatus = SaveStatusUnsaved
 				return m, nil
@@ -480,15 +473,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "esc":
 			// Save and exit
-			if m.Buffer.IsModified() {
-				m.CurrentScene.Content = m.Buffer.GetContent()
-				storage.SaveScene(m.CurrentProject.Directory, m.CurrentScene)
-				m.Message = "Scene saved"
-			}
-			m.Buffer.ClearSearch()
-			m.CurrentScene = nil
-			m.Buffer = nil
-			m.CurrentScreen = ScreenScenes
+			m.ExitEditor(true)
 			return m, nil
 		case "ctrl+f":
 			// Enter search mode
@@ -513,18 +498,7 @@ func (m Model) handleTextEditorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+s":
 			// Manual save
-			m.SaveStatus = SaveStatusSaving
-			m.CurrentScene.Content = m.Buffer.GetContent()
-			err := storage.SaveScene(m.CurrentProject.Directory, m.CurrentScene)
-			if err != nil {
-				m.Error = err
-				m.SaveStatus = SaveStatusUnsaved
-			} else {
-				m.Buffer.SetModified(false)
-				m.SaveStatus = SaveStatusSaved
-				m.LastSaveTime = time.Now()
-				m.Message = "Saved"
-			}
+			m.SaveCurrentScene()
 			return m, nil
 		case "ctrl+z":
 			m.Buffer.Undo()
