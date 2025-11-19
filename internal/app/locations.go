@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyanite/syntax/internal/location"
 	"github.com/kyanite/syntax/internal/storage"
+	"github.com/kyanite/syntax/internal/utils"
 )
 
 func (m Model) viewLocations() string {
@@ -131,24 +132,27 @@ func (m Model) handleLocationsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.InputValue = ""
 			return m, nil
 		}
-		// TODO: Navigate to location editor
-		m.Message = "Location editor coming soon"
+
+		// Navigate to location editor
+		loc := utils.GetLocationAtIndex(m.CurrentProject.Locations, m.SelectedIndex)
+		if loc != nil {
+			m.CurrentLocation = loc
+			m.PreviousScreen = ScreenLocations
+			m.CurrentScreen = ScreenLocationEditor
+			m.SelectedIndex = 0 // Reset for field navigation
+		}
 		return m, nil
 
 	case "d":
 		if !m.InputMode && locCount > 0 {
 			// Delete selected location
-			locations := make([]*location.Location, 0, len(m.CurrentProject.Locations))
-			for _, loc := range m.CurrentProject.Locations {
-				locations = append(locations, loc)
-			}
-
-			if m.SelectedIndex < len(locations) {
-				loc := locations[m.SelectedIndex]
-				if err := storage.DeleteLocation(m.CurrentProject.Directory, loc.ID); err != nil {
+			locID := utils.FindLocationIDAtIndex(m.CurrentProject.Locations, m.SelectedIndex)
+			if locID != "" {
+				loc := m.CurrentProject.Locations[locID]
+				if err := storage.DeleteLocation(m.CurrentProject.Directory, locID); err != nil {
 					m.Error = err
 				} else {
-					delete(m.CurrentProject.Locations, loc.ID)
+					delete(m.CurrentProject.Locations, locID)
 					m.CurrentProject.TotalLocations--
 					m.Message = fmt.Sprintf("Deleted location: %s", loc.Name)
 

@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/kyanite/syntax/internal/scene"
@@ -13,17 +12,8 @@ import (
 
 // ExportDOCX exports the project to a DOCX file
 func ExportDOCX(project *story.Project, scenes map[string]*scene.Scene) ([]byte, error) {
-	// Sort scenes
-	sortedScenes := make([]*scene.Scene, 0, len(scenes))
-	for _, sc := range scenes {
-		sortedScenes = append(sortedScenes, sc)
-	}
-	sort.Slice(sortedScenes, func(i, j int) bool {
-		if sortedScenes[i].Chapter != sortedScenes[j].Chapter {
-			return sortedScenes[i].Chapter < sortedScenes[j].Chapter
-		}
-		return sortedScenes[i].SceneNumber < sortedScenes[j].SceneNumber
-	})
+	// Sort scenes by chapter and scene number
+	sortedScenes := scene.SortScenes(scenes)
 
 	// Build document XML
 	var content strings.Builder

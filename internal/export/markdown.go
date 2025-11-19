@@ -2,7 +2,6 @@ package export
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -25,17 +24,7 @@ func ExportMarkdown(project *story.Project, scenes map[string]*scene.Scene) ([]b
 	b.WriteString("---\n\n")
 
 	// Sort scenes by chapter and scene number
-	sceneList := make([]*scene.Scene, 0, len(scenes))
-	for _, sc := range scenes {
-		sceneList = append(sceneList, sc)
-	}
-
-	sort.Slice(sceneList, func(i, j int) bool {
-		if sceneList[i].Chapter != sceneList[j].Chapter {
-			return sceneList[i].Chapter < sceneList[j].Chapter
-		}
-		return sceneList[i].SceneNumber < sceneList[j].SceneNumber
-	})
+	sceneList := scene.SortScenes(scenes)
 
 	// Group by chapter
 	currentChapter := 0
@@ -115,17 +104,7 @@ func ExportHTML(project *story.Project, scenes map[string]*scene.Scene) ([]byte,
 	b.WriteString("  <hr>\n\n")
 
 	// Sort and output scenes
-	sceneList := make([]*scene.Scene, 0, len(scenes))
-	for _, sc := range scenes {
-		sceneList = append(sceneList, sc)
-	}
-
-	sort.Slice(sceneList, func(i, j int) bool {
-		if sceneList[i].Chapter != sceneList[j].Chapter {
-			return sceneList[i].Chapter < sceneList[j].Chapter
-		}
-		return sceneList[i].SceneNumber < sceneList[j].SceneNumber
-	})
+	sceneList := scene.SortScenes(scenes)
 
 	currentChapter := 0
 	for _, sc := range sceneList {

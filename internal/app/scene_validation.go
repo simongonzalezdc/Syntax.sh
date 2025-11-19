@@ -6,7 +6,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kyanite/syntax/internal/scene"
-	"github.com/kyanite/syntax/internal/storage"
 )
 
 func (m Model) viewSceneValidation() string {
@@ -14,13 +13,7 @@ func (m Model) viewSceneValidation() string {
 		return "No project loaded"
 	}
 
-	// Load scenes if not loaded
-	if m.CurrentProject.Scenes == nil || len(m.CurrentProject.Scenes) == 0 {
-		scenes, err := storage.LoadAllScenes(m.CurrentProject.Directory)
-		if err == nil {
-			m.CurrentProject.Scenes = scenes
-		}
-	}
+	// Data is loaded in Update via ensureDataLoaded()
 
 	var b strings.Builder
 

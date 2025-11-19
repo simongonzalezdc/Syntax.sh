@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/adrg/xdg"
@@ -25,21 +26,33 @@ func GetConfigDir() string {
 // GenerateCharacterID generates a unique character ID
 func GenerateCharacterID() string {
 	bytes := make([]byte, 8) // 8 bytes = 16 hex chars
-	rand.Read(bytes)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		// Fallback to time-based ID if crypto/rand fails
+		return fmt.Sprintf("char_%d_%d", time.Now().UnixNano(), time.Now().Unix())
+	}
 	return "char_" + hex.EncodeToString(bytes)
 }
 
 // GenerateLocationID generates a unique location ID
 func GenerateLocationID() string {
 	bytes := make([]byte, 8)
-	rand.Read(bytes)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		// Fallback to time-based ID if crypto/rand fails
+		return fmt.Sprintf("loc_%d_%d", time.Now().UnixNano(), time.Now().Unix())
+	}
 	return "loc_" + hex.EncodeToString(bytes)
 }
 
 // GenerateProjectID generates a unique project ID
 func GenerateProjectID() string {
 	bytes := make([]byte, 8)
-	rand.Read(bytes)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		// Fallback to time-based ID if crypto/rand fails
+		return fmt.Sprintf("proj_%d_%d", time.Now().UnixNano(), time.Now().Unix())
+	}
 	return "proj_" + hex.EncodeToString(bytes)
 }
 
@@ -81,7 +94,8 @@ func AtomicWriteFile(path string, data []byte, perm os.FileMode) error {
 
 	// Atomic rename (overwrites existing file)
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // Clean up temp file
+		// Clean up temp file (ignore error as we're already failing)
+		_ = os.Remove(tmpPath)
 		return err
 	}
 
