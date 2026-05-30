@@ -27,3 +27,8 @@ Thumbs.db
 
 # Project data (user-specific)
 syntax-data/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
