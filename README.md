@@ -32,8 +32,8 @@ This is an initial MVP implementation demonstrating the core architecture:
 
 ```bash
 # Clone the repository
-git clone https://github.com/kyanite/syntax.git
-cd syntax
+git clone https://github.com/simongonzalezdc/Syntax.sh.git
+cd Syntax.sh
 
 # Build the application
 go build -o bin/syntax ./cmd/syntax
@@ -250,8 +250,8 @@ syntax.sh is part of the Kyanite Suite of terminal productivity tools.
 ## Support
 
 - **Documentation:** See the `*.md` files in this repository
-- **Issues:** https://github.com/kyanite/syntax/issues
-- **Discussions:** https://github.com/kyanite/syntax/discussions
+- **Issues:** https://github.com/simongonzalezdc/Syntax.sh/issues
+- **Discussions:** https://github.com/simongonzalezdc/Syntax.sh/discussions
 
 ## Acknowledgments
 

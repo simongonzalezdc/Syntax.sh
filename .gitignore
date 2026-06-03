@@ -1,5 +1,6 @@
 # Binaries
 bin/
+/syntax
 *.exe
 *.dll
 *.so
@@ -36,3 +37,6 @@ syntax-data/
 *.pfx
 id_rsa
 id_ed25519
+
+# Local agent workspace
+.omx/

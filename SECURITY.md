@@ -402,8 +402,10 @@ func syncFile(path string) error {
 # Check for updates
 syntax --version
 
-# Update to latest
-go install github.com/kyanite/syntax@latest
+# Update to latest from the public repository
+git clone https://github.com/simongonzalezdc/Syntax.sh.git
+cd Syntax.sh
+go build -o bin/syntax ./cmd/syntax
 ```
 
 ### 2. Use Local Mode (Default)
@@ -536,7 +538,7 @@ syntax backup
 - Response Time: 48 hours
 
 **General Questions:**
-- GitHub Discussions: github.com/kyanite/syntax/discussions
+- GitHub Discussions: github.com/simongonzalezdc/Syntax.sh/discussions
 - Documentation: docs.kyanite.sh
 
 ---
