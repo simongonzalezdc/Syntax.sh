@@ -48,8 +48,9 @@ func (c *InsertRuneCommand) Undo(b *Buffer) {
 		return
 	}
 	line := b.lines[c.Line]
-	if c.Col >= 0 && c.Col < len(line) {
-		b.lines[c.Line] = line[:c.Col] + line[c.Col+1:]
+	runeWidth := len(string(c.Rune))
+	if c.Col >= 0 && c.Col+runeWidth <= len(line) {
+		b.lines[c.Line] = line[:c.Col] + line[c.Col+runeWidth:]
 	}
 	b.cursorLine = c.PrevLine
 	b.cursorCol = c.PrevCol
@@ -64,11 +65,11 @@ func (c *InsertRuneCommand) Redo(b *Buffer) {
 		b.lines[c.Line] = line[:c.Col] + string(c.Rune) + line[c.Col:]
 	}
 	b.cursorLine = c.Line
-	b.cursorCol = c.Col + 1
+	b.cursorCol = c.Col + len(string(c.Rune))
 }
 
 func (c *InsertRuneCommand) GetCursor() (line, col int) {
-	return c.Line, c.Col + 1
+	return c.Line, c.Col + len(string(c.Rune))
 }
 
 // InsertNewlineCommand represents inserting a newline
@@ -309,7 +310,7 @@ func (b *Buffer) InsertRune(r rune) {
 	before := line[:b.cursorCol]
 	after := line[b.cursorCol:]
 	b.lines[b.cursorLine] = before + string(r) + after
-	b.cursorCol++
+	b.cursorCol += len(string(r))
 	b.modified = true
 }
 
