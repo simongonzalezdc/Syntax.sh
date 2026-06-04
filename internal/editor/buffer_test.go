@@ -141,6 +141,25 @@ func TestUndo(t *testing.T) {
 	}
 }
 
+func TestUndoMultiByteRune(t *testing.T) {
+	buf := NewBuffer("")
+
+	buf.InsertRune('e')
+	buf.InsertRune('é')
+
+	if content := buf.GetContent(); content != "eé" {
+		t.Fatalf("Expected 'eé', got '%s'", content)
+	}
+
+	if !buf.Undo() {
+		t.Fatal("Expected undo to succeed")
+	}
+
+	if content := buf.GetContent(); content != "e" {
+		t.Fatalf("After undo, expected 'e', got '%s'", content)
+	}
+}
+
 func TestRedo(t *testing.T) {
 	buf := NewBuffer("")
 
